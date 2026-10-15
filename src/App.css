@@ -8,6 +8,10 @@
   --accent-soft: #dbe7fe;
   --clip: #7c3aed;
   --warn: #b45309;
+  --wave: #94a3b8;
+  --wave-rms: #475569;
+  --spike: #e11d48;
+  --playhead: #dc2626;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 14px;
   color: var(--text);
@@ -25,6 +29,10 @@
     --accent-soft: #1e3a5f;
     --clip: #a78bfa;
     --warn: #f59e0b;
+    --wave: #64748b;
+    --wave-rms: #cbd5e1;
+    --spike: #fb7185;
+    --playhead: #f87171;
   }
 }
 
@@ -116,3 +124,25 @@ dialog.settings h3 { font-size: 13px; margin: 18px 0 6px; color: var(--muted); }
   max-width: 420px; padding: 10px 14px; border-radius: 8px; cursor: pointer;
   background: #7f1d1d; color: #fff; box-shadow: 0 4px 14px rgb(0 0 0 / 0.25);
 }
+
+.waveform-panel { margin-bottom: 18px; }
+.timeline {
+  position: relative; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel); overflow: hidden; user-select: none;
+}
+.timeline canvas { display: block; cursor: crosshair; touch-action: none; }
+.timeline-tip {
+  position: absolute; pointer-events: none; white-space: nowrap; font-size: 12px;
+  padding: 3px 7px; border-radius: 4px; background: var(--text); color: var(--bg);
+}
+.analysis-progress { display: flex; align-items: center; gap: 12px; margin: 10px 0 18px; }
+.analysis-progress progress { flex: 1; max-width: 360px; }
+.spike-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+.spike-list table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+.spike-list th, .spike-list td { text-align: left; padding: 4px 10px; border-bottom: 1px solid var(--border); }
+.spike-list th { position: sticky; top: 0; background: var(--panel); font-weight: 600; color: var(--muted); font-size: 12.5px; }
+.spike-list tbody tr { cursor: pointer; }
+.spike-list tbody tr:hover { background: var(--accent-soft); }
+.spike-list tbody tr.selected { background: var(--accent-soft); box-shadow: inset 3px 0 var(--spike); }
+.spike-list .hint { margin: 0; padding: 5px 10px; font-size: 12px; }
+.recording-facts summary { cursor: pointer; font-weight: 600; margin: 4px 0 10px; }

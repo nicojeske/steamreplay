@@ -1,0 +1,13 @@
+SteamReplay for Windows includes ffmpeg.exe and ffprobe.exe from the FFmpeg project
+(https://ffmpeg.org), version n7.1.5-12-g1fdbca85aa, as built by
+https://github.com/BtbN/FFmpeg-Builds (release autobuild-2026-07-31-14-10, win64-gpl-7.1).
+
+This FFmpeg build is licensed under the GNU General Public License, version 3 or later.
+The full license text is in LICENSE.txt next to this file.
+
+SteamReplay runs these programs as separate processes; it does not link to FFmpeg.
+
+Source code of this exact FFmpeg build:
+  FFmpeg:       https://github.com/FFmpeg/FFmpeg/tree/1fdbca85aa
+  Build scripts and bundled libraries:
+                https://github.com/BtbN/FFmpeg-Builds/tree/autobuild-2026-07-31-14-10

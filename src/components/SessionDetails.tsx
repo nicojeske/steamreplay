@@ -1,6 +1,7 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { SessionDetail, StreamInfo } from "../bindings";
 import { formatBytes, formatDateTime, formatDuration, formatResolution } from "../lib/format";
+import { WaveformPanel } from "./WaveformPanel";
 
 type Props = { detail: SessionDetail; onError: (e: unknown) => void };
 
@@ -41,6 +42,10 @@ export function SessionDetails({ detail, onError }: Props) {
         {formatDateTime(s.startedAt)} · {formatDuration(s.durationS)} · {formatBytes(s.sizeBytes)}
       </p>
 
+      {s.durationS > 0 && <WaveformPanel key={s.id} detail={detail} onError={onError} />}
+
+      <details className="recording-facts">
+        <summary>Recording details</summary>
       <dl className="facts">
         <dt>Folder</dt>
         <dd>
@@ -88,6 +93,7 @@ export function SessionDetails({ detail, onError }: Props) {
           {detail.timelineLeadS !== null && ")"}
         </dd>
       </dl>
+      </details>
 
       <h2>
         Markers <span className="count">{detail.markers.length}</span>

@@ -30,3 +30,12 @@ export function formatDateTime(iso: string): string {
 export function formatResolution(w: number | null, h: number | null): string {
   return w && h ? `${w}×${h}` : "unknown";
 }
+
+/** Seconds → `hh:mm:ss`, with `decimals` fractional digits (for fine ruler ticks). */
+export function formatTimecode(totalSeconds: number, decimals = 0): string {
+  const scale = 10 ** decimals;
+  const t = Math.round(Math.max(0, totalSeconds) * scale) / scale;
+  const whole = Math.floor(t);
+  if (decimals === 0) return formatDuration(whole);
+  return formatDuration(whole) + (t - whole).toFixed(decimals).slice(1);
+}

@@ -1,5 +1,6 @@
 mod commands;
 mod error;
+mod media;
 mod steam;
 
 use tauri_specta::{Builder, collect_commands};
@@ -12,6 +13,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::get_session,
         commands::set_recordings_root_override,
         commands::get_diagnostics,
+        commands::analyze_audio,
+        commands::get_waveform,
+        commands::get_spikes,
+        commands::cancel_job,
+        commands::get_ffmpeg_info,
+        commands::set_ffmpeg_dir,
     ])
 }
 
@@ -41,12 +48,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .manage(media::MediaState::default())
         .invoke_handler(builder.invoke_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-#[cfg(test)]
+#[cfg(all(test, debug_assertions))]
 mod tests {
     /// Keeps `src/bindings.ts` current in `cargo test` without starting the app.
     #[test]

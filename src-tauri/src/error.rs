@@ -13,6 +13,10 @@ pub enum AppError {
     Parse(String),
     #[error("{0}")]
     Store(String),
+    #[error("{0}")]
+    Ffmpeg(String),
+    #[error("cancelled")]
+    Cancelled,
 }
 
 #[derive(Serialize, Type)]
@@ -22,6 +26,8 @@ pub enum AppErrorKind {
     Io,
     Parse,
     Store,
+    Ffmpeg,
+    Cancelled,
 }
 
 #[derive(Serialize, Type)]
@@ -42,6 +48,8 @@ impl AppError {
             Self::Io(_) => AppErrorKind::Io,
             Self::Parse(_) => AppErrorKind::Parse,
             Self::Store(_) => AppErrorKind::Store,
+            Self::Ffmpeg(_) => AppErrorKind::Ffmpeg,
+            Self::Cancelled => AppErrorKind::Cancelled,
         };
         AppErrorPayload { kind, message: self.to_string() }
     }

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { commands, type DiscoveryInfo } from "../bindings";
-import { unwrap } from "../lib/ipc";
+import { commands, type DiscoveryInfo, type FfmpegPaths } from "../bindings";
+import { errorMessage, unwrap } from "../lib/ipc";
 
 type Props = {
   info: DiscoveryInfo | null;
@@ -14,10 +14,25 @@ type Props = {
 export function SettingsDialog({ info, onClose, onChanged, onError }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const [copied, setCopied] = useState(false);
+  const [ffmpeg, setFfmpeg] = useState<FfmpegPaths | string | null>(null);
 
   useEffect(() => {
     ref.current?.showModal();
+    unwrap(commands.getFfmpegInfo()).then(setFfmpeg, (e: unknown) => setFfmpeg(errorMessage(e)));
   }, []);
+
+  const setFfmpegDir = async (path: string | null) => {
+    try {
+      setFfmpeg(await unwrap(commands.setFfmpegDir(path)));
+    } catch (e) {
+      onError(e);
+    }
+  };
+
+  const pickFfmpeg = async () => {
+    const dir = await open({ directory: true, title: "Choose the folder with ffmpeg and ffprobe" });
+    if (typeof dir === "string") await setFfmpegDir(dir);
+  };
 
   const setOverride = async (path: string | null) => {
     try {
@@ -55,6 +70,29 @@ export function SettingsDialog({ info, onClose, onChanged, onError }: Props) {
         {info?.recordingsRootOverride && (
           <button type="button" onClick={() => setOverride(null)}>
             Clear override
+          </button>
+        )}
+      </div>
+
+      <h3>ffmpeg</h3>
+      {ffmpeg === null ? (
+        <p className="muted">Checking…</p>
+      ) : typeof ffmpeg === "string" ? (
+        <p className="warn">{ffmpeg}</p>
+      ) : (
+        <p>
+          <span className="mono">{ffmpeg.ffmpeg}</span> ({ffmpeg.source})
+          <br />
+          <span className="muted">{ffmpeg.version}</span>
+        </p>
+      )}
+      <div className="buttons">
+        <button type="button" onClick={pickFfmpeg}>
+          Choose ffmpeg folder…
+        </button>
+        {typeof ffmpeg === "object" && ffmpeg?.source === "settings" && (
+          <button type="button" onClick={() => setFfmpegDir(null)}>
+            Use bundled / PATH
           </button>
         )}
       </div>

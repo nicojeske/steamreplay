@@ -43,6 +43,18 @@ jobs:
           workspaces: src-tauri
 
       - run: pnpm install --frozen-lockfile
+      # tauri-build checks that the externalBin sidecars exist, so this runs before clippy.
+      - name: Cache ffmpeg sidecar
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/binaries
+            src-tauri/resources/ffmpeg/LICENSE.txt
+          key: ffmpeg-${{ hashFiles('scripts/fetch-ffmpeg.ts') }}
+      - name: Fetch ffmpeg sidecar
+        if: runner.os == 'Windows'
+        run: pnpm fetch-ffmpeg
 
       - name: cargo clippy
         working-directory: src-tauri
