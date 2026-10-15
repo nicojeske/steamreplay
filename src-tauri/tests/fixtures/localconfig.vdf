@@ -1,0 +1,22 @@
+"UserLocalConfigStore"
+{
+	"friends"
+	{
+		"PersonaName"		"redacted"
+	}
+	"GameRecording"
+	{
+		"BackgroundRecordMode"		"1"
+		"VideoBitRate"		"preset_default"
+		"Audio_Mic"		"1"
+		"AutomaticGainControl"		"0"
+		"ExportLimitType"		"0"
+		"ExportDirectory"		"/home/user/Videos"
+		"ToggleKey"		"KEY_NONE"
+		"InstantClipKey"		"Ctrl	KEY_F11"
+		"InstantClipDuration"		"90"
+		"BackgroundMaxKeep"		"300min"
+		"MarkerKey"		"KEY_PAD_MINUS"
+		"ForceMicMono"		"1"
+	}
+}

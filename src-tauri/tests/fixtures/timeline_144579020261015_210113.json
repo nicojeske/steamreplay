@@ -1,0 +1,75 @@
+{
+	"daterecorded": "1792098073",
+	"starttime": "0",
+	"entries": [
+		{
+			"id": "16082308127955867072",
+			"time": "2291279",
+			"type": "usermarker",
+			"title": "",
+			"description": "",
+			"icon": "steam_marker",
+			"priority": 0,
+			"duration": "0",
+			"possible_clip": 2
+		}
+,
+		{
+			"id": "16082308127955867072",
+			"time": "2699710",
+			"type": "usermarker",
+			"title": "",
+			"description": "",
+			"icon": "steam_marker",
+			"priority": 0,
+			"duration": "0",
+			"possible_clip": 2
+		}
+,
+		{
+			"id": "1",
+			"time": "3735706",
+			"type": "error",
+			"description": "#GameRecording_RecordingFailed"
+		}
+,
+		{
+			"id": "16082308127955867072",
+			"time": "5264781",
+			"type": "usermarker",
+			"title": "",
+			"description": "",
+			"icon": "steam_marker",
+			"priority": 0,
+			"duration": "0",
+			"possible_clip": 2
+		}
+,
+		{
+			"id": "16082308127955867072",
+			"time": "5370291",
+			"type": "usermarker",
+			"title": "",
+			"description": "",
+			"icon": "steam_marker",
+			"priority": 0,
+			"duration": "0",
+			"possible_clip": 2
+		}
+,
+		{
+			"id": "16082308127955867072",
+			"time": "5555891",
+			"type": "usermarker",
+			"title": "",
+			"description": "",
+			"icon": "steam_marker",
+			"priority": 0,
+			"duration": "0",
+			"possible_clip": 2
+		}
+
+	]
+,
+	"endtime": "5986786"
+}
