@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Gap, Marker, Spike } from "../bindings";
 import { formatTimecode } from "../lib/format";
+import { snapSelection } from "../lib/selection";
 import type { WaveformTiles } from "../lib/waveform";
 import { useView, zoomToRange } from "../state/view";
 
@@ -9,6 +10,8 @@ type Props = {
   spikes: Spike[];
   markers: Marker[];
   gaps: Gap[];
+  /** Chunk length: the export cuts on these boundaries. */
+  segS: number;
 };
 
 const OVERVIEW_H = 36;
@@ -21,8 +24,10 @@ const MAIN_TOP = OVERVIEW_H + RULER_H + FLAGS_H;
 const TICK_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
 const MIN_TICK_PX = 90;
 const DRAG_THRESHOLD_PX = 3;
+/** How close the pointer must be to a selection edge to grab it. */
+const EDGE_GRAB_PX = 5;
 
-type Colors = Record<"wave" | "rms" | "text" | "muted" | "border" | "accent" | "spike" | "playhead" | "warn" | "clip" | "panel", string>;
+type Colors = Record<"wave" | "rms" | "text" | "muted" | "border" | "accent" | "spike" | "playhead" | "warn" | "clip" | "panel" | "selection", string>;
 
 function readColors(el: Element): Colors {
   const cs = getComputedStyle(el);
@@ -39,6 +44,7 @@ function readColors(el: Element): Colors {
     warn: v("--warn"),
     clip: v("--clip"),
     panel: v("--panel"),
+    selection: v("--selection"),
   };
 }
 
@@ -52,9 +58,11 @@ type Hover = { x: number; y: number; text: string } | null;
 
 type Drag =
   | { kind: "main"; startX: number; startView: [number, number]; moved: boolean }
-  | { kind: "overview"; grabOffsetS: number };
+  | { kind: "overview"; grabOffsetS: number }
+  /** Shift+drag makes a new selection; dragging an edge moves it. `anchorS` is the fixed end. */
+  | { kind: "select"; anchorS: number };
 
-export function Timeline({ tiles, spikes, markers, gaps }: Props) {
+export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(0);
@@ -62,9 +70,9 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
   const drag = useRef<Drag | null>(null);
   const frame = useRef(0);
   // Kept in refs so the draw function and native listeners always see current values.
-  const props = useRef({ tiles, spikes, markers, gaps, width });
+  const props = useRef({ tiles, spikes, markers, gaps, segS, width });
   useEffect(() => {
-    props.current = { tiles, spikes, markers, gaps, width };
+    props.current = { tiles, spikes, markers, gaps, segS, width };
   });
 
   // --- drawing -------------------------------------------------------------------------------
@@ -73,7 +81,7 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
   useEffect(() => {
     draw.current = () => {
       const canvas = canvasRef.current;
-      const { tiles, spikes, markers, gaps, width: w } = props.current;
+      const { tiles, spikes, markers, gaps, segS, width: w } = props.current;
       if (!canvas || w === 0) return;
       const dpr = window.devicePixelRatio || 1;
       if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(HEIGHT * dpr)) {
@@ -84,7 +92,7 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
       if (!ctx) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const c = readColors(canvas);
-      const { durationS, viewStartS, viewEndS, playheadS, selectedSpike } = useView.getState();
+      const { durationS, viewStartS, viewEndS, playheadS, selectedSpike, inS, outS } = useView.getState();
       ctx.clearRect(0, 0, w, HEIGHT);
       if (durationS <= 0) return;
 
@@ -96,6 +104,10 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
       drawWave(ctx, tiles, tiles.topLevel, 0, durationS, w, 2, OVERVIEW_H - 4, c, false);
       ctx.fillStyle = c.spike;
       for (const s of spikes) ctx.fillRect(ovX(s.startS), 0, Math.max(1, ovX(s.endS) - ovX(s.startS)), 3);
+      if (inS !== null && outS !== null) {
+        ctx.fillStyle = c.selection;
+        ctx.fillRect(ovX(inS), OVERVIEW_H - 4, Math.max(2, ovX(outS) - ovX(inS)), 3);
+      }
       const vx0 = ovX(viewStartS);
       const vx1 = Math.max(vx0 + 2, ovX(viewEndS));
       ctx.fillStyle = "rgb(128 128 128 / 0.18)";
@@ -144,6 +156,33 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
         ctx.restore();
       }
       ctx.restore();
+
+      // Selection: the band, the snapped cut as dashed ghost edges, and solid in/out edges.
+      if (inS !== null && outS !== null) {
+        const [g0, g1] = snapSelection(inS, outS, segS, durationS);
+        const top = OVERVIEW_H + RULER_H;
+        const h = FLAGS_H + MAIN_H;
+        ctx.save();
+        ctx.fillStyle = c.selection;
+        ctx.globalAlpha = 0.08;
+        ctx.fillRect(toX(g0), top, toX(g1) - toX(g0), h);
+        ctx.globalAlpha = 0.2;
+        ctx.fillRect(toX(inS), top, Math.max(1, toX(outS) - toX(inS)), h);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = c.selection;
+        ctx.setLineDash([4, 3]);
+        for (const t of [g0, g1]) {
+          const x = Math.round(toX(t)) + 0.5;
+          ctx.beginPath();
+          ctx.moveTo(x, top);
+          ctx.lineTo(x, top + h);
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        ctx.fillStyle = c.selection;
+        for (const t of [inS, outS]) ctx.fillRect(Math.round(toX(t)) - 1, top, 2, h);
+        ctx.restore();
+      }
 
       // Spike bands with rank labels.
       ctx.textBaseline = "top";
@@ -203,7 +242,7 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
 
   useEffect(() => {
     schedule.current();
-  }, [tiles, spikes, markers, gaps, width]);
+  }, [tiles, spikes, markers, gaps, segS, width]);
 
   useEffect(() => {
     const redraw = schedule.current;
@@ -282,7 +321,30 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
       }
       return;
     }
+    const edge = edgeAt(localX(e), localY(e));
+    if (edge !== null) {
+      const { inS, outS } = useView.getState();
+      drag.current = { kind: "select", anchorS: edge === "in" ? (outS ?? 0) : (inS ?? 0) };
+      return;
+    }
+    if (e.shiftKey) {
+      const t = timeAtX(localX(e));
+      drag.current = { kind: "select", anchorS: t };
+      useView.getState().setSelection(t, t);
+      return;
+    }
     drag.current = { kind: "main", startX: localX(e), startView: [viewStartS, viewEndS], moved: false };
+  };
+
+  /** The selection edge under the pointer, if any (main area only). */
+  const edgeAt = (x: number, y: number): "in" | "out" | null => {
+    const { inS, outS, viewStartS, viewEndS } = useView.getState();
+    if (inS === null || outS === null || y < OVERVIEW_H + RULER_H) return null;
+    const toX = (t: number) => ((t - viewStartS) / (viewEndS - viewStartS)) * props.current.width;
+    const dIn = Math.abs(toX(inS) - x);
+    const dOut = Math.abs(toX(outS) - x);
+    if (Math.min(dIn, dOut) > EDGE_GRAB_PX) return null;
+    return dIn <= dOut ? "in" : "out";
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -294,6 +356,10 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
       const t = (x / w) * durationS;
       const span = viewEndS - viewStartS;
       setView(t - d.grabOffsetS, t - d.grabOffsetS + span);
+      return;
+    }
+    if (d?.kind === "select") {
+      useView.getState().setSelection(d.anchorS, timeAtX(x));
       return;
     }
     if (d?.kind === "main") {
@@ -308,8 +374,9 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
       }
       return;
     }
-    // Hover: marker flags and spike bands.
+    // Hover: selection edges, marker flags and spike bands.
     const y = localY(e);
+    e.currentTarget.style.cursor = edgeAt(x, y) !== null ? "ew-resize" : "";
     let text: string | null = null;
     if (y >= OVERVIEW_H + RULER_H) {
       const t = timeAtX(x);
@@ -332,6 +399,11 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
     const d = drag.current;
     drag.current = null;
     if (d?.kind === "main" && !d.moved) useView.getState().seek(timeAtX(localX(e)));
+    if (d?.kind === "select") {
+      // A Shift+click without dragging leaves an empty selection behind.
+      const { inS, outS, clearSelection } = useView.getState();
+      if (inS !== null && outS !== null && outS - inS < 0.05) clearSelection();
+    }
   };
 
   const onDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {

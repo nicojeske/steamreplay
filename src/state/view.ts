@@ -17,6 +17,13 @@ type ViewState = {
   /** Bumped by `seek`; the player jumps to `seekTarget` when it changes. */
   seekSeq: number;
   seekTarget: number;
+  /** Bumped by `requestPlay`; the player starts playing when it changes. */
+  playSeq: number;
+  /** In/out selection for export, in video time. Both set or both null. */
+  inS: number | null;
+  outS: number | null;
+  /** While playing, wrap from the out point back to the in point. */
+  loop: boolean;
   /** Shows the whole session and puts the playhead at 0. */
   reset: (durationS: number) => void;
   /** Moves the playhead without moving the video (used by the video itself). */
@@ -28,6 +35,14 @@ type ViewState = {
   selectSpike: (index: number | null) => void;
   setPlaying: (playing: boolean) => void;
   setFollow: (follow: boolean) => void;
+  requestPlay: () => void;
+  /** Sets the in point; the out point defaults to the end of the session. Swaps if needed. */
+  setIn: (t: number) => void;
+  /** Sets the out point; the in point defaults to 0. Swaps if needed. */
+  setOut: (t: number) => void;
+  setSelection: (a: number, b: number) => void;
+  clearSelection: () => void;
+  setLoop: (loop: boolean) => void;
 };
 
 function clampView(start: number, end: number, duration: number): [number, number] {
@@ -50,8 +65,23 @@ export const useView = create<ViewState>((set) => ({
   follow: true,
   seekSeq: 0,
   seekTarget: 0,
+  playSeq: 0,
+  inS: null,
+  outS: null,
+  loop: false,
   reset: (durationS) =>
-    set({ durationS, playheadS: 0, viewStartS: 0, viewEndS: durationS, selectedSpike: null, playing: false, follow: true }),
+    set({
+      durationS,
+      playheadS: 0,
+      viewStartS: 0,
+      viewEndS: durationS,
+      selectedSpike: null,
+      playing: false,
+      follow: true,
+      inS: null,
+      outS: null,
+      loop: false,
+    }),
   setPlayhead: (t) => set((st) => ({ playheadS: clampTime(t, st.durationS) })),
   seek: (t) =>
     set((st) => {
@@ -66,7 +96,18 @@ export const useView = create<ViewState>((set) => ({
   selectSpike: (selectedSpike) => set({ selectedSpike }),
   setPlaying: (playing) => set(playing ? { playing, follow: true } : { playing }),
   setFollow: (follow) => set({ follow }),
+  requestPlay: () => set((st) => ({ playSeq: st.playSeq + 1 })),
+  setIn: (t) => set((st) => selection(t, st.outS ?? st.durationS, st.durationS)),
+  setOut: (t) => set((st) => selection(st.inS ?? 0, t, st.durationS)),
+  setSelection: (a, b) => set((st) => selection(a, b, st.durationS)),
+  clearSelection: () => set({ inS: null, outS: null }),
+  setLoop: (loop) => set({ loop }),
 }));
+
+function selection(a: number, b: number, duration: number) {
+  const [x, y] = [clampTime(a, duration), clampTime(b, duration)];
+  return { inS: Math.min(x, y), outS: Math.max(x, y) };
+}
 
 /** Shows `[start, end]` with a margin of 15 % on each side. */
 export function zoomToRange(startS: number, endS: number) {

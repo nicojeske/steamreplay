@@ -15,6 +15,7 @@ use crate::media::ffmpeg::{self, FfmpegPaths};
 use crate::media::pyramid::Samples;
 use crate::media::spikes::{self, Spike, SpikeParams};
 use crate::media::preview::{self, Backend, PreviewCache, PreviewInfo, PreviewState, SessionSetup};
+use crate::media::export::{self, ExportRequest, ExportResult, Snap};
 use crate::media::{self, Analysis, MediaState, Progress, WaveformMeta, chunks};
 use crate::steam::locate::{self, RootCheck, SteamAccount};
 use crate::steam::recordings::{self, SessionDetail, SessionSummary};
@@ -468,4 +469,108 @@ pub async fn clear_preview_cache(preview: State<'_, PreviewState>) -> AppResult<
         Ok(())
     })
     .await
+}
+
+// --- export (M3) --------------------------------------------------------------------------------
+
+fn export_cache_dir(app: &AppHandle) -> AppResult<PathBuf> {
+    let dir = app.path().app_cache_dir().map_err(|e| AppError::Io(format!("no cache folder: {e}")))?;
+    Ok(dir.join("steamreplay").join("export"))
+}
+
+/// Removes job folders left behind by a crash.
+pub fn clean_export_cache(app: &AppHandle) {
+    if let Ok(dir) = export_cache_dir(app) {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// `session.mpd` changed in the last few seconds: the game is still recording.
+fn is_live(detail: &SessionDetail) -> bool {
+    std::fs::metadata(detail.summary.dir.join("session.mpd"))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age.as_secs() < export::LIVE_MPD_AGE_S)
+}
+
+fn snap(detail: &SessionDetail, in_s: f64, out_s: f64) -> AppResult<Snap> {
+    let seg = detail.mpd.as_ref().map_or(3.0, |m| m.segment_duration_s);
+    export::chunk_range(&detail.chunks, seg, in_s, out_s, is_live(detail), detail.summary.size_bytes)
+}
+
+/// The account's `ExportDirectory`, else the system video folder, else `~/Videos`.
+fn export_dir(app: &AppHandle, account_id: &str) -> AppResult<PathBuf> {
+    let info = discover(app)?;
+    if let Some(d) = info.accounts.into_iter().find(|a| a.account_id == account_id).and_then(|a| a.export_dir) {
+        return Ok(d);
+    }
+    app.path()
+        .video_dir()
+        .or_else(|_| app.path().home_dir().map(|h| h.join("Videos")))
+        .map_err(|e| AppError::Io(format!("no export folder: {e}")))
+}
+
+/// Where the selection is cut, plus an estimated file size.
+#[tauri::command]
+#[specta::specta]
+pub async fn export_snap(app: AppHandle, id: String, in_s: f64, out_s: f64) -> AppResult<Snap> {
+    blocking(move || snap(&session(&app, &id)?, in_s, out_s)).await
+}
+
+/// `<export folder>/<Game>_<date>.mp4` for the snapped in point, made unique.
+#[tauri::command]
+#[specta::specta]
+pub async fn default_export_path(app: AppHandle, id: String, in_s: f64) -> AppResult<PathBuf> {
+    blocking(move || {
+        let detail = session(&app, &id)?;
+        let s = snap(&detail, in_s, in_s)?;
+        let dir = export_dir(&app, &detail.summary.account_id)?;
+        let name = export::default_file_name(&detail.summary.game_name, &detail.summary.started_at, s.actual_in_s);
+        Ok(export::dedupe(&dir.join(name)))
+    })
+    .await
+}
+
+/// Exports the selection with stream copy. `job_id` is chosen by the frontend for `cancel_job`.
+#[tauri::command]
+#[specta::specta]
+pub async fn export_clip(
+    app: AppHandle,
+    state: State<'_, MediaState>,
+    req: ExportRequest,
+    job_id: String,
+    progress: Channel<Progress>,
+) -> AppResult<ExportResult> {
+    let job = state.start_job(&job_id);
+    let (detail, snap, out) = {
+        let (app, req) = (app.clone(), req.clone());
+        blocking(move || {
+            let detail = session(&app, &req.id)?;
+            let s = snap(&detail, req.in_s, req.out_s)?;
+            let out = match req.output {
+                Some(p) => p,
+                None => {
+                    let dir = export_dir(&app, &detail.summary.account_id)?;
+                    let name =
+                        export::default_file_name(&detail.summary.game_name, &detail.summary.started_at, s.actual_in_s);
+                    export::dedupe(&dir.join(name))
+                }
+            };
+            Ok((detail, s, out))
+        })
+        .await?
+    };
+    let paths = ffmpeg_paths(&app, &state).await?;
+    let job_dir = export_cache_dir(&app)?.join(&job_id);
+    let seg = detail.mpd.as_ref().map_or(3.0, |m| m.segment_duration_s);
+    let title = format!("{} {}", detail.summary.game_name, detail.summary.started_at);
+    let on_progress: ffmpeg::ProgressFn = Arc::new(move |fraction| {
+        let _ = progress.send(Progress { fraction });
+    });
+    let started = std::time::Instant::now();
+    let size_bytes =
+        export::export(&paths, &detail.summary.dir, &snap, seg, &title, &out, &job_dir, on_progress, &job.token).await?;
+    log::info!("exported {} chunks to {} in {:?}", snap.chunks(), out.display(), started.elapsed());
+    Ok(ExportResult { path: out, actual_in_s: snap.actual_in_s, actual_out_s: snap.actual_out_s, size_bytes })
 }

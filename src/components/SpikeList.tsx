@@ -16,7 +16,12 @@ function goTo(spikes: Spike[], i: number) {
   zoomToRange(s.startS, s.endS);
 }
 
-/** Ranked loud regions. `N`/`P` step by rank, `Shift+N`/`Shift+P` step in time order. */
+/** Sets the export selection to the spike region. */
+function selectRegion(s: Spike | undefined) {
+  if (s) useView.getState().setSelection(s.startS, s.endS);
+}
+
+/** Ranked loud regions. `N`/`P` step by rank, `Shift+N`/`Shift+P` step in time order, `S` selects the region. */
 export function SpikeList({ spikes }: Props) {
   const selected = useView((s) => s.selectedSpike);
   const listRef = useRef<HTMLTableSectionElement>(null);
@@ -25,6 +30,13 @@ export function SpikeList({ spikes }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.altKey || e.metaKey || isTyping(e.target) || spikes.length === 0) return;
       const key = e.key.toLowerCase();
+      if (key === "s" && !e.shiftKey) {
+        const i = useView.getState().selectedSpike;
+        if (i === null) return;
+        e.preventDefault();
+        selectRegion(spikes[i]);
+        return;
+      }
       if (key !== "n" && key !== "p") return;
       e.preventDefault();
       const { selectedSpike, playheadS } = useView.getState();
@@ -61,6 +73,7 @@ export function SpikeList({ spikes }: Props) {
             <th>Time</th>
             <th>Length</th>
             <th>Score</th>
+            <th />
           </tr>
         </thead>
         <tbody ref={listRef}>
@@ -70,11 +83,25 @@ export function SpikeList({ spikes }: Props) {
               <td className="mono">{formatTimecode(s.startS)}</td>
               <td>{(s.endS - s.startS).toFixed(1)} s</td>
               <td>{s.score.toFixed(1)}</td>
+              <td>
+                <button
+                  type="button"
+                  className="link"
+                  title="Use as export selection (S)"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    goTo(spikes, i);
+                    selectRegion(s);
+                  }}
+                >
+                  Select
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="muted hint">N / P: next / previous by rank · Shift: in time order</p>
+      <p className="muted hint">N / P: next / previous by rank · Shift: in time order · S: select region for export</p>
     </div>
   );
 }

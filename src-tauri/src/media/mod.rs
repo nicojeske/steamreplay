@@ -2,6 +2,7 @@
 
 pub mod audio;
 pub mod chunks;
+pub mod export;
 pub mod preview;
 pub mod ffmpeg;
 pub mod pyramid;

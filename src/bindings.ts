@@ -62,6 +62,12 @@ export const commands = {
 /**  libx264. Works everywhere, but needs many CPU cores. */
 "software" | null, cacheMb: number) => typedError<null, AppError>(__TAURI_INVOKE("set_preview_settings", { backend, cacheMb })),
 	clearPreviewCache: () => typedError<null, AppError>(__TAURI_INVOKE("clear_preview_cache")),
+	/**  Where the selection is cut, plus an estimated file size. */
+	exportSnap: (id: string, inS: number | null, outS: number | null) => typedError<Snap, AppError>(__TAURI_INVOKE("export_snap", { id, inS, outS })),
+	/**  `<export folder>/<Game>_<date>.mp4` for the snapped in point, made unique. */
+	defaultExportPath: (id: string, inS: number | null) => typedError<string, AppError>(__TAURI_INVOKE("default_export_path", { id, inS })),
+	/**  Exports the selection with stream copy. `job_id` is chosen by the frontend for `cancel_job`. */
+	exportClip: (req: ExportRequest, jobId: string, progress: Channel<Progress>) => typedError<ExportResult, AppError>(__TAURI_INVOKE("export_clip", { req, jobId, progress })),
 };
 
 /* Types */
@@ -100,6 +106,21 @@ export type DiscoveryInfo = {
 	steamRoots: string[],
 	accounts: SteamAccount[],
 	recordingsRootOverride: string | null,
+};
+
+export type ExportRequest = {
+	id: string,
+	inS: number,
+	outS: number,
+	/**  Default: [`default_file_name`] in the account's export folder. */
+	output: string | null,
+};
+
+export type ExportResult = {
+	path: string,
+	actualInS: number,
+	actualOutS: number,
+	sizeBytes: number,
 };
 
 export type FfmpegPaths = {
@@ -214,6 +235,16 @@ export type SessionSummary = {
 	sizeBytes: number,
 	/**  The folder that holds `session.mpd`. */
 	dir: string,
+};
+
+/**  The selection snapped to chunk boundaries. */
+export type Snap = {
+	first: number,
+	last: number,
+	actualInS: number,
+	actualOutS: number,
+	/**  Average chunk size × chunks. */
+	estBytes: number,
 };
 
 export type Spike = {

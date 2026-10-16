@@ -137,6 +137,13 @@ export class MsePlayer {
     return t;
   }
 
+  /** Starts playback, or once the pending seek has landed. */
+  play() {
+    if (this.destroyed) return;
+    if (this.seeking) this.resume = true;
+    else void this.video.play().catch(() => {});
+  }
+
   /** Moves the video to `t`, loading the segment first when it is not buffered. */
   seek(t: number) {
     if (this.destroyed) return;

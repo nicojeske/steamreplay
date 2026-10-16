@@ -1,5 +1,7 @@
 # M3: In/out selection and fast export
 
+> Built **after** M4 (see the build order in `00-overview.md`). This spec describes what was implemented.
+
 ## 1. Goal and user-visible outcome
 Set an in point and an out point on the timeline, by key, by dragging, or with "use spike region". Then press **Export**. In a few seconds an MP4 with the original quality (HEVC + AAC, no re-encode) appears in the export folder. The cut snaps to the 3 s chunk boundaries around the selection.
 
@@ -30,7 +32,7 @@ Set an in point and an out point on the timeline, by key, by dragging, or with "
 5. Run:
    ```
    ffmpeg -hide_banner -nostdin -v error -i v.mp4 -i a.mp4 -map 0:v:0 -map 1:a:0 -c copy \
-          -movflags +faststart -metadata title="<game> <timestamp>" -y <out.part.mp4>
+          -tag:v hvc1 -movflags +faststart -metadata title="<game> <timestamp>" -f mp4 -y <out.part.mp4>
    ```
    then rename `out.part.mp4` → final name, so partial files never appear in the export folder.
 6. Delete the job folder (also on error or cancel).
@@ -43,23 +45,30 @@ Default: `<ExportDirectory or ~/Videos>/<GameName>_<YYYY-MM-DD_HH-MM-SS>.mp4`, w
 ```rust
 pub struct ExportRequest { id: String, in_s: f64, out_s: f64, output: Option<PathBuf> }
 pub struct ExportResult { path: PathBuf, actual_in_s: f64, actual_out_s: f64, size_bytes: u64 }
-#[tauri::command] async fn export_clip(req: ExportRequest, progress: Channel<Progress>) -> Result<ExportResult, AppError>;
-#[tauri::command] fn default_export_path(id: String, in_s: f64) -> Result<PathBuf, AppError>;
+pub struct Snap { first: u32, last: u32, actual_in_s: f64, actual_out_s: f64, est_bytes: u64 }
+#[tauri::command] async fn export_clip(req: ExportRequest, job_id: String, progress: Channel<Progress>) -> Result<ExportResult, AppError>;
+#[tauri::command] async fn default_export_path(id: String, in_s: f64) -> Result<PathBuf, AppError>;
+#[tauri::command] async fn export_snap(id: String, in_s: f64, out_s: f64) -> Result<Snap, AppError>;
 ```
-Progress: phase `Snapshot` (chunks copied / total) → `Mux` (from ffmpeg progress) → `Done`. Cancelling uses `cancel_job` from M2.
+- `export_snap` gives the snapped cut and the size estimate (`session size / chunk count × chunks`) for the panel. The snap math lives only in `export::chunk_range`. `src/lib/selection.ts` mirrors it for drawing only.
+- `output: None` uses the default name, worked out when the job starts. That way, queued exports with default names do not collide.
+- Progress is one fraction: 0–0.5 snapshot (files linked or copied), 0.5–1 mux (ffmpeg `out_time`). Cancelling uses `cancel_job`; the frontend picks `job_id`.
+- Default folder: the account's `ExportDirectory`, else the system video folder, else `~/Videos`.
+- Leftover job folders (after a crash) are deleted at startup.
 
 ### Frontend
 - **Selection:**
   - `I`/`O` set in or out at the playhead,
-  - drag on the timeline with Alt (or in a separate selection lane under the waveform) to make a range,
-  - drag the edges to adjust,
+  - **Shift+drag** on the timeline to make a range. Alt was dropped, because Alt+drag moves windows on KDE and GNOME,
+  - drag the edges to adjust (the cursor changes within 5 px of an edge),
   - `Esc` clears the selection,
-  - **loop selection** (toggle `Ctrl+L`, moved here from M4): while there is an in/out selection, the preview player loops inside it. Implement it in `Player.tsx` (on each frame callback: if `currentTime >= out`, `seek(in)`). This helps fine-tuning before export,
-  - in the spike list, "Select" on a spike sets in/out to the spike region.
+  - **loop selection** (toggle `Ctrl+L`, moved here from M4): while there is an in/out selection, the preview player loops inside it. It is implemented in the `Player.tsx` tick: it wraps when playback *crosses* the out point, so a seek past the out point is not pulled back. The panel also has a Loop checkbox. This helps fine-tuning before export,
+  - in the spike list, "Select" on a spike (or `S` on the selected spike) sets in/out to the spike region.
 - The selection is drawn as a band with **ghost edges** that show where the snapped chunk boundaries really fall.
 - **Export panel:** shows selection length, snapped length and estimated size (`chunks × average chunk size`), plus an editable output path with a "Browse…" button (`tauri-plugin-dialog` save) and an Export button. After the export: "Show in folder" (`tauri-plugin-opener` reveal) and "Copy path".
 - Several exports can run one after another. A small job list shows their status.
-- The export panel has a "Play selection" button that seeks the player to the in point and plays with loop on.
+- The export panel has a "Play selection" button that seeks the player to the in point and plays with loop on. `useView.requestPlay` → `MsePlayer.play()` starts playback once the seek has landed.
+- The panel (`ExportPanel.tsx`) sits between the timeline and the spike list. Selection state (`inS`, `outS`, `loop`) is in `useView` and is cleared on `reset`.
 
 ## 5. Edge cases
 - `in_s ≥ out_s`, or the selection is shorter than one chunk: still export at least 1 chunk (3 s).
@@ -81,9 +90,9 @@ Progress: phase `Snapshot` (chunks copied / total) → `Mux` (from ffmpeg progre
 
 ## 7. Verification steps
 - **Unit tests:** chunk-range math (in/out → n_in/n_out with `first ≠ 1`, clamping, gap detection), file-name sanitising and dedupe.
-- **Integration test** (`#[ignore]`, needs ffmpeg): export the 2-chunk clip fixture → ffprobe shows hevc + aac and duration ≈ 6 s.
+- **Integration test** `export_session` (`#[ignore]`, needs ffmpeg): the clip fixture has audio only, so it uses `STEAMREPLAY_SESSION_DIR=<bg folder>`. It exports the first 30 s → ffprobe shows hevc + aac with a duration of 30 ± 0.1 s, and no job folder or `.part` file is left. Measured: 0.35 s on `bg_1445790_20261015_210120` and 0.31 s on the pruned `bg_1623730_20261010_164846`.
 - **Manual:** export 3 different spikes, watch them, and compare the start frame with the timeline position.
 
 ## 8. Open questions / risks
 - HEVC MP4s from 5120×1440 recordings play poorly in some apps (Discord embeds, WhatsApp). This is expected. Precise mode with H.264 output and optional downscale comes in M5. Point this out in the UI tooltip.
-- `hev1` vs `hvc1` tag: QuickTime/Apple and some players need `hvc1`. Add `-tag:v hvc1` to the mux command if a test shows it is harmless for other players. It should be.
+- `hev1` vs `hvc1` tag: the mux uses `-tag:v hvc1` (QuickTime/Apple need it). ffprobe reads the result fine. Playback in other players is checked manually.

@@ -26,6 +26,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::get_preview_settings,
         commands::set_preview_settings,
         commands::clear_preview_cache,
+        commands::export_snap,
+        commands::default_export_path,
+        commands::export_clip,
     ])
 }
 
@@ -58,6 +61,7 @@ pub fn run() {
         .manage(media::MediaState::default())
         .setup(|app| {
             app.manage(commands::init_preview(app.handle())?);
+            commands::clean_export_cache(app.handle());
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("replay", |ctx, request, responder| {

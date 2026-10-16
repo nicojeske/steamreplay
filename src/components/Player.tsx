@@ -52,6 +52,10 @@ export function Player({ id }: Props) {
     () =>
       useView.subscribe((s, prev) => {
         if (s.seekSeq !== prev.seekSeq) playerRef.current?.seek(s.seekTarget);
+        if (s.playSeq !== prev.playSeq) {
+          setReverse(0);
+          playerRef.current?.play();
+        }
       }),
     [],
   );
@@ -63,6 +67,7 @@ export function Player({ id }: Props) {
     let handle = 0;
     let lastSync = 0;
     let lastSegment = -1;
+    let lastT = video.currentTime;
     const segS = load.kind === "ready" ? load.info.segmentS : 12;
     const tick = (now: number) => {
       if (now - lastSync >= SYNC_INTERVAL_MS) {
@@ -74,6 +79,16 @@ export function Player({ id }: Props) {
           return;
         }
         const t = video.currentTime;
+        // Loop selection: wrap when playback runs over the out point (not when a seek jumps past it).
+        const { loop, inS, outS } = useView.getState();
+        const prevT = lastT;
+        lastT = t;
+        if (loop && inS !== null && outS !== null && prevT < outS && t >= outS && t - prevT < 1) {
+          lastT = inS;
+          useView.getState().seek(inS);
+          schedule();
+          return;
+        }
         useView.getState().setPlayhead(t);
         followPlayhead();
         const seg = Math.floor(t / segS);
@@ -219,7 +234,7 @@ export function Player({ id }: Props) {
         <span className="muted">{shownRate}</span>
         <span className="spacer" />
         <span className="muted hint">
-          Space play · J/K/L −/stop/+ · ←/→ 1 s (Shift 5 s) · ,/. frame
+          Space play · J/K/L −/stop/+ · ←/→ 1 s (Shift 5 s) · ,/. frame · I/O in/out · Ctrl+L loop
           {load.kind === "ready" && ` · ${load.info.backend}`}
         </span>
       </div>
