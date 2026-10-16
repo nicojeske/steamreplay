@@ -35,12 +35,12 @@
   2. a centred mean over `short_ms` (`st`),
   3. a sliding-histogram median over `baseline_s` (`base`),
   4. regions where `st − base > threshold`, followed by min length, merge, pad, score and sort.
-- `get_spikes(id, params: Option<SpikeParams>)` (`commands.rs:238`) exists, but `WaveformPanel.tsx:36` always passes `null`.
+- `get_spikes(id, params: Option<SpikeParams>)` (`commands.rs:249`, already wrapped in `blocking`) exists, but `WaveformPanel.tsx:36` always passes `null`.
 
 ### 4.2 Faster re-detect (backend)
 Split `detect` into two stages:
 ```rust
-pub struct Curves { st: Vec<f32>, base: Vec<f32> }            // per level-0 bin, dB
+pub struct Curves { st: Vec<f32>, base: Vec<Option<f32>>, include: Vec<bool> }  // per level-0 bin, dB; include = not digital silence
 pub fn curves(level0: &[Bin], short_ms: u32, baseline_s: f32) -> Curves;   // expensive
 pub fn regions(c: &Curves, p: &SpikeParams) -> Vec<Spike>;                // cheap, O(n)
 pub fn detect(level0, p) -> Vec<Spike> { regions(&curves(level0, p.short_ms, p.baseline_s), p) }
@@ -50,14 +50,16 @@ pub fn detect(level0, p) -> Vec<Spike> { regions(&curves(level0, p.short_ms, p.b
 - Measure `curves` and `regions` on the 1 h sample (about 372 k bins). If dragging the baseline slider takes longer than 200 ms, recompute only when the slider is released (`onChange` commit), and say so in the UI.
 
 ### 4.3 Presets (backend)
-- Store keys in `settings.json` (`read_setting`/`write_setting`, `commands.rs:300-315`):
+- Store keys in `settings.json` (`read_setting`/`write_setting`, `commands.rs:311-327`):
   - `spikeDefaults: SpikeParams` (absent = the built-in `Default`),
   - `spikePresets: { [appId: string]: SpikeParams }`.
 - Commands:
   ```rust
   #[tauri::command] fn get_spike_params(app_id: u32) -> SpikeParams;                  // preset → defaults → built-in
   #[tauri::command] fn set_spike_params(app_id: u32, params: Option<SpikeParams>);    // None = reset to defaults
+  #[tauri::command] fn get_spike_defaults() -> SpikeParams;
   #[tauri::command] fn set_spike_defaults(params: Option<SpikeParams>);               // None = built-in
+  #[tauri::command] fn clear_spike_presets();
   ```
 - `SessionSummary.app_id` (`steam/recordings.rs:37`) supplies the app id. Clips use the same app id as sessions, so they share the preset.
 
@@ -85,13 +87,14 @@ pub fn detect(level0, p) -> Vec<Spike> { regions(&curves(level0, p.short_ms, p.b
 ### 4.5 Settings page (`src/components/SettingsDialog.tsx`)
 Today it has: recordings folder override, ffmpeg, video preview (`PreviewSection`), detected Steam folders, accounts, and copy diagnostics. Add:
 - **Export:**
-  - Default folder override (`exportDirOverride`). `export_dir` (`commands.rs:503`) checks it first, before the account's `ExportDirectory`.
-  - Default mode (Fast/Precise) and default preset. These go through the same `get_export_prefs`/`set_export_prefs` from M5, so the panel starts with them, and the last-used choice still overrides them for the session.
+  - Default folder override (`exportDirOverride`). `export_dir` (`commands.rs:516`) checks it first, before the account's `ExportDirectory`.
+  - "Mode and preset for the next export". **Decided:** there are no separate default keys. This section edits the same `exportMode`/`exportPrecise` keys that M5 saves on every export (`get_export_prefs`/`set_export_prefs`, `commands.rs:654-663`). A separate default would never apply, because the last-used choice is saved anyway. If the ExportPanel is mounted, it reloads the prefs when the dialog closes.
 - **Loud parts:** "Default sensitivity" plus a "Reset all game presets" button, which clears `spikePresets` (`set_spike_defaults` plus a `clear_spike_presets` command).
 - **Storage:** shows the cache sizes (waveform, preview, export) and has one **Clear caches** button. A new `clear_caches()` command:
   - deletes `app_cache_dir/steamreplay/{waveform,preview,export}`, skipping files that are in use by a running job,
   - empties the in-memory `MediaState.loaded` LRU,
   - and does the same as `clear_preview_cache`.
+  - It skips the `export/<jobId>` folders of exports that are still running (live job ids in `MediaState`) and returns `{ skipped: u32 }`, so the UI can say "some files were in use".
   `get_cache_sizes()` reports the sizes.
 - Group the sections with headings in this order: Recordings, Export, Loud parts, Preview, ffmpeg, Storage, Diagnostics.
 
@@ -101,16 +104,16 @@ Today it has: recordings folder override, ffmpeg, video preview (`PreviewSection
   export const SHORTCUTS: { keys: string; action: string; group: "Playback" | "Navigation" | "Selection" | "General" }[]
   ```
   This covers every key handled today:
-  - `Player.tsx:133-182`: Space, K, L, J, ←/→, Shift+←/→, `,` `.`
+  - `Player.tsx:133-187`: Space, K, L, J, ←/→, Shift+←/→, `,` `.`
   - `SpikeList.tsx:30-54`: S, N/P, Shift+N/P
-  - `ExportPanel.tsx:35-53`: I, O, Ctrl+L, Esc
+  - `ExportPanel.tsx:66-90`: I, O, Ctrl+L, Esc
   - plus `?` itself.
   The handlers stay where they are. The list is documentation only, and a comment at each handler points to it.
 - `?` (when not typing, `isTyping()`) opens `ShortcutsOverlay.tsx`, a native `<dialog>` like `SettingsDialog`, with one table per group. Esc closes it. A "Keyboard shortcuts" button in the settings dialog opens it too.
 
 ### 4.7 Recent exports
-- When an export finishes, append `{ path, gameName, inS, outS, mode, sizeBytes, finishedAt }` to the store key `recentExports` (keep the newest 20). Use the commands `get_recent_exports()` and `add_recent_export(entry)`, or do it inside `export_clip` on success. Doing it in the backend is preferred, so it is not lost if the panel unmounts.
-- In `ExportPanel.tsx`, a collapsible "Recent exports" list under the job list, with "Show in folder" and "Copy path" (reuse the `JobRow` actions). Entries whose file no longer exists are shown greyed out (checked with `exists` when the list opens), with a "Remove" action.
+- When an export finishes, append `{ path, gameName, inS, outS, mode, sizeBytes, finishedAt }` to the store key `recentExports` (keep the newest 20). **Decided:** do it inside `export_clip` on success (`commands.rs:558`), using a pure `push_recent(list, entry)` that keeps the newest 20. A failure to save is only logged, so the export never fails because of it. The commands are `get_recent_exports() -> Vec<{ entry, exists: bool }>` and `remove_recent_export(path)`.
+- In `ExportPanel.tsx`, a collapsible "Recent exports" list under the job list, with "Show in folder" and "Copy path" (pull the buttons out of `JobRow`, `ExportPanel.tsx:450`, into a shared `PathActions`). Entries whose file no longer exists are shown greyed out, with a "Remove" action. The backend sets `exists`, because there is no fs plugin in `capabilities/default.json`; do not add one.
 
 ## 5. Edge cases
 - A preset saved by an older version that has missing or extra fields: `#[serde(default)]` on `SpikeParams`, so missing fields fall back to the defaults.
@@ -137,7 +140,7 @@ Today it has: recordings folder override, ffmpeg, video preview (`PreviewSection
 - **Unit tests:**
   - `regions(curves(x)) == detect(x)` (old implementation kept in the test as reference) on random and fixture data,
   - curve-cache key reuse,
-  - `get_spike_params` precedence (preset → defaults → built-in) and clamping, using a store mock or the pure helper,
+  - `get_spike_params` precedence (preset → defaults → built-in) and clamping, through a pure `resolve_spike_params(preset, defaults)` helper and `SpikeParams::clamped()` (also clamp `short_ms` 50–2000 and `max_results` 1–1000),
   - `recentExports` trimming to 20.
 - **Bench** (`#[ignore]`, `STEAMREPLAY_SESSION_DIR`): time `curves` and `regions` on the 1 h session, and print the numbers into this spec.
 - **Manual:**
