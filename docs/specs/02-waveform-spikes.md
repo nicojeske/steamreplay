@@ -18,8 +18,8 @@ Clicking a spike or marker moves the playhead there and zooms in. A 1 h session 
 
 **Non-goals:**
 - video preview (M4), export (M3),
-- spike parameter UI (M5): use defaults here, with constants in one place,
-- live updates (M5),
+- spike parameter UI (M6): use defaults here, with constants in one place,
+- live updates (M7),
 - separating mic from game audio (Steam mixes them).
 
 ## 4. Design

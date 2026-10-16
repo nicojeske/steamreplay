@@ -13,7 +13,7 @@ Set an in point and an out point on the timeline, by key, by dragging, or with "
 **In scope:** selection state and UI, `media/export.rs` fast mode, export panel, progress, "show in folder".
 
 **Non-goals:**
-- frame-accurate cuts and re-encoding or resizing (M5),
+- frame-accurate cuts and re-encoding or resizing (M5, `05-precise-export.md`),
 - uploading or sharing.
 
 ## 4. Design
