@@ -2,6 +2,7 @@
 
 pub mod audio;
 pub mod chunks;
+pub mod encoders;
 pub mod export;
 pub mod preview;
 pub mod ffmpeg;
@@ -89,6 +90,8 @@ impl Analysis {
 /// Shared state of the media commands.
 pub struct MediaState {
     ffmpeg: Mutex<Option<FfmpegPaths>>,
+    /// Encoder lists of the ffmpeg at that path.
+    caps: Mutex<Option<(PathBuf, Arc<encoders::Capabilities>)>>,
     loaded: Mutex<LruCache<String, Arc<Analysis>>>,
     jobs: Mutex<HashMap<String, CancellationToken>>,
 }
@@ -97,6 +100,7 @@ impl Default for MediaState {
     fn default() -> Self {
         Self {
             ffmpeg: Mutex::new(None),
+            caps: Mutex::new(None),
             loaded: Mutex::new(LruCache::new(NonZeroUsize::new(LOADED_CAPACITY).expect("non-zero"))),
             jobs: Mutex::new(HashMap::new()),
         }
@@ -123,6 +127,16 @@ impl MediaState {
 
     pub fn set_ffmpeg(&self, paths: Option<FfmpegPaths>) {
         *self.ffmpeg.lock().expect("ffmpeg lock") = paths;
+        *self.caps.lock().expect("caps lock") = None;
+    }
+
+    /// The capabilities probed for `ffmpeg`, if they are cached.
+    pub fn cached_caps(&self, ffmpeg: &Path) -> Option<Arc<encoders::Capabilities>> {
+        self.caps.lock().expect("caps lock").as_ref().filter(|(p, _)| p == ffmpeg).map(|(_, c)| c.clone())
+    }
+
+    pub fn set_caps(&self, ffmpeg: &Path, caps: Arc<encoders::Capabilities>) {
+        *self.caps.lock().expect("caps lock") = Some((ffmpeg.to_owned(), caps));
     }
 
     /// The loaded analysis, if it still matches the chunk range on disk.

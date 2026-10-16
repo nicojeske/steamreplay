@@ -64,10 +64,18 @@ export const commands = {
 	clearPreviewCache: () => typedError<null, AppError>(__TAURI_INVOKE("clear_preview_cache")),
 	/**  Where the selection is cut, plus an estimated file size. */
 	exportSnap: (id: string, inS: number | null, outS: number | null) => typedError<Snap, AppError>(__TAURI_INVOKE("export_snap", { id, inS, outS })),
-	/**  `<export folder>/<Game>_<date>.mp4` for the snapped in point, made unique. */
-	defaultExportPath: (id: string, inS: number | null) => typedError<string, AppError>(__TAURI_INVOKE("default_export_path", { id, inS })),
-	/**  Exports the selection with stream copy. `job_id` is chosen by the frontend for `cancel_job`. */
+	/**  `<export folder>/<Game>_<date>.mp4` for the in point, made unique. */
+	defaultExportPath: (id: string, inS: number | null, exact: boolean) => typedError<string, AppError>(__TAURI_INVOKE("default_export_path", { id, inS, exact })),
+	/**
+	 *  Exports the selection (stream copy or re-encode). `job_id` is chosen by the frontend for
+	 *  `cancel_job`.
+	 */
 	exportClip: (req: ExportRequest, jobId: string, progress: Channel<Progress>) => typedError<ExportResult, AppError>(__TAURI_INVOKE("export_clip", { req, jobId, progress })),
+	/**  Codecs a precise export can use with this ffmpeg and the session's GPU family. */
+	getExportCapabilities: (id: string) => typedError<VideoCodec[], AppError>(__TAURI_INVOKE("get_export_capabilities", { id })),
+	/**  The last used export mode, preset and custom options. */
+	getExportPrefs: () => typedError<ExportPrefs, AppError>(__TAURI_INVOKE("get_export_prefs")),
+	setExportPrefs: (prefs: ExportPrefs) => typedError<null, AppError>(__TAURI_INVOKE("set_export_prefs", { prefs })),
 };
 
 /* Types */
@@ -108,12 +116,31 @@ export type DiscoveryInfo = {
 	recordingsRootOverride: string | null,
 };
 
+export type ExportMode = 
+/**  Stream copy, cut at chunk boundaries. */
+{ kind: "fast" } | 
+/**  Re-encode, cut on the exact frames. */
+{
+	kind: "precise",
+} & PreciseOpts;
+
+/**  What the export panel remembers between runs (settings keys `exportMode`, `exportPrecise`). */
+export type ExportModeKind = "fast" | "precise";
+
+export type ExportPrefs = {
+	mode: ExportModeKind | null,
+	precise: PrecisePrefs | null,
+};
+
+export type ExportPreset = "discord" | "discordNitro" | "original" | "custom";
+
 export type ExportRequest = {
 	id: string,
 	inS: number,
 	outS: number,
 	/**  Default: [`default_file_name`] in the account's export folder. */
 	output: string | null,
+	mode: ExportMode,
 };
 
 export type ExportResult = {
@@ -121,6 +148,10 @@ export type ExportResult = {
 	actualInS: number,
 	actualOutS: number,
 	sizeBytes: number,
+	/**  ffmpeg encoder name, or `"copy"` for Fast. */
+	encoder: string,
+	/**  The hardware encoder failed and the software one made the file. */
+	fellBack: boolean,
 };
 
 export type FfmpegPaths = {
@@ -169,6 +200,22 @@ export type MpdInfo = {
 	initTemplate: string,
 };
 
+export type PreciseOpts = {
+	codec: VideoCodec,
+	/**  1080, 720, …; keeps the aspect ratio, never upscales. `None`: source height. */
+	maxHeight: number | null,
+	/**  `None`: source frame rate. */
+	fps: number | null,
+	/**  Centre crop to 16:9 for sources wider than that. */
+	crop16x9: boolean,
+	target: Quality,
+};
+
+export type PrecisePrefs = {
+	preset: ExportPreset,
+	opts: PreciseOpts,
+};
+
 export type PreviewInfo = {
 	segmentS: number,
 	count: number,
@@ -190,6 +237,13 @@ export type Progress = {
 	/**  0..1 */
 	fraction: number,
 };
+
+/**  Size or quality target of a precise export. */
+export type Quality = 
+/**  Constant quality; lower is better. Mapped to each encoder's own scale. */
+{ kind: "crf"; q: number } | 
+/**  Average bitrate chosen so the file stays below `mb` megabytes. */
+{ kind: "maxSizeMb"; mb: number };
 
 /**  A Steam root candidate and what was found there (for the empty state and diagnostics). */
 export type RootCheck = {
@@ -287,6 +341,8 @@ export type StreamInfo = {
 	sampleRate: number | null,
 	channels: number | null,
 };
+
+export type VideoCodec = "h264" | "hevc" | "av1";
 
 export type WaveformMeta = {
 	binMs: number,

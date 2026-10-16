@@ -92,7 +92,7 @@ export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
       if (!ctx) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const c = readColors(canvas);
-      const { durationS, viewStartS, viewEndS, playheadS, selectedSpike, inS, outS } = useView.getState();
+      const { durationS, viewStartS, viewEndS, playheadS, selectedSpike, inS, outS, exportMode } = useView.getState();
       ctx.clearRect(0, 0, w, HEIGHT);
       if (durationS <= 0) return;
 
@@ -157,28 +157,32 @@ export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
       }
       ctx.restore();
 
-      // Selection: the band, the snapped cut as dashed ghost edges, and solid in/out edges.
+      // Selection: the band and solid in/out edges. A fast export cuts at chunk boundaries, shown
+      // as a lighter band with dashed ghost edges.
       if (inS !== null && outS !== null) {
-        const [g0, g1] = snapSelection(inS, outS, segS, durationS);
         const top = OVERVIEW_H + RULER_H;
         const h = FLAGS_H + MAIN_H;
         ctx.save();
         ctx.fillStyle = c.selection;
-        ctx.globalAlpha = 0.08;
-        ctx.fillRect(toX(g0), top, toX(g1) - toX(g0), h);
+        if (exportMode === "fast") {
+          const [g0, g1] = snapSelection(inS, outS, segS, durationS);
+          ctx.globalAlpha = 0.08;
+          ctx.fillRect(toX(g0), top, toX(g1) - toX(g0), h);
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = c.selection;
+          ctx.setLineDash([4, 3]);
+          for (const t of [g0, g1]) {
+            const x = Math.round(toX(t)) + 0.5;
+            ctx.beginPath();
+            ctx.moveTo(x, top);
+            ctx.lineTo(x, top + h);
+            ctx.stroke();
+          }
+          ctx.setLineDash([]);
+        }
         ctx.globalAlpha = 0.2;
         ctx.fillRect(toX(inS), top, Math.max(1, toX(outS) - toX(inS)), h);
         ctx.globalAlpha = 1;
-        ctx.strokeStyle = c.selection;
-        ctx.setLineDash([4, 3]);
-        for (const t of [g0, g1]) {
-          const x = Math.round(toX(t)) + 0.5;
-          ctx.beginPath();
-          ctx.moveTo(x, top);
-          ctx.lineTo(x, top + h);
-          ctx.stroke();
-        }
-        ctx.setLineDash([]);
         ctx.fillStyle = c.selection;
         for (const t of [inS, outS]) ctx.fillRect(Math.round(toX(t)) - 1, top, 2, h);
         ctx.restore();

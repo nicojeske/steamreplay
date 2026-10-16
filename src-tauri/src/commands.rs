@@ -15,7 +15,8 @@ use crate::media::ffmpeg::{self, FfmpegPaths};
 use crate::media::pyramid::Samples;
 use crate::media::spikes::{self, Spike, SpikeParams};
 use crate::media::preview::{self, Backend, PreviewCache, PreviewInfo, PreviewState, SessionSetup};
-use crate::media::export::{self, ExportRequest, ExportResult, Snap};
+use crate::media::encoders::{self, Capabilities, VideoCodec};
+use crate::media::export::{self, ExportMode, ExportPrefs, ExportRequest, ExportResult, Snap};
 use crate::media::{self, Analysis, MediaState, Progress, WaveformMeta, chunks};
 use crate::steam::locate::{self, RootCheck, SteamAccount};
 use crate::steam::recordings::{self, SessionDetail, SessionSummary};
@@ -149,6 +150,16 @@ async fn ffmpeg_paths(app: &AppHandle, state: &MediaState) -> AppResult<FfmpegPa
     log::info!("using {} ({})", paths.ffmpeg.display(), paths.version);
     state.set_ffmpeg(Some(paths.clone()));
     Ok(paths)
+}
+
+/// Encoders and hwaccels of the current ffmpeg, probed once per ffmpeg path.
+async fn capabilities(state: &MediaState, paths: &FfmpegPaths) -> Arc<Capabilities> {
+    if let Some(c) = state.cached_caps(&paths.ffmpeg) {
+        return c;
+    }
+    let caps = Arc::new(Capabilities::probe(paths, &CancellationToken::new()).await);
+    state.set_caps(&paths.ffmpeg, caps.clone());
+    caps
 }
 
 /// The loaded analysis, or the one in the disk cache. Never decodes.
@@ -326,6 +337,7 @@ pub fn init_preview(app: &AppHandle) -> AppResult<PreviewState> {
 async fn preview_backend(
     app: &AppHandle,
     preview: &PreviewState,
+    media: &MediaState,
     paths: &FfmpegPaths,
     detail: &SessionDetail,
 ) -> Backend {
@@ -340,7 +352,8 @@ async fn preview_backend(
         return b;
     }
     let cancel = CancellationToken::new();
-    let b = preview::transcode::detect(paths, &detail.summary.dir, detail.chunks.first, &preview.cache.tmp_dir(), &cancel).await;
+    let caps = capabilities(media, paths).await;
+    let b = preview::transcode::detect(paths, &caps, &detail.summary.dir, detail.chunks.first, &preview.cache.tmp_dir(), &cancel).await;
     *preview.detected.lock().expect("detected lock") = Some(b);
     if let Err(e) = write_setting(app, PREVIEW_DETECTED_KEY, Some(b)) {
         log::warn!("could not store the preview backend: {e}");
@@ -370,7 +383,7 @@ pub async fn get_preview_info(
         return Ok(s.info());
     }
     let paths = ffmpeg_paths(&app, &media).await?;
-    let backend = preview_backend(&app, &preview, &paths, &detail).await;
+    let backend = preview_backend(&app, &preview, &media, &paths, &detail).await;
     let dir = detail.summary.dir.clone();
     let v0 = chunks::probe_start(&paths, &dir, chunks::VIDEO_INIT, &chunks::video_chunk(detail.chunks.first), &CancellationToken::new())
         .await?;
@@ -471,7 +484,7 @@ pub async fn clear_preview_cache(preview: State<'_, PreviewState>) -> AppResult<
     .await
 }
 
-// --- export (M3) --------------------------------------------------------------------------------
+// --- export (M3, M5) --------------------------------------------------------------------------------
 
 fn export_cache_dir(app: &AppHandle) -> AppResult<PathBuf> {
     let dir = app.path().app_cache_dir().map_err(|e| AppError::Io(format!("no cache folder: {e}")))?;
@@ -518,31 +531,40 @@ pub async fn export_snap(app: AppHandle, id: String, in_s: f64, out_s: f64) -> A
     blocking(move || snap(&session(&app, &id)?, in_s, out_s)).await
 }
 
-/// `<export folder>/<Game>_<date>.mp4` for the snapped in point, made unique.
+/// Where the file name's time comes from: the snapped in point (Fast) or `in_s` itself (Precise).
+fn name_time(detail: &SessionDetail, in_s: f64, exact: bool) -> AppResult<f64> {
+    let s = snap(detail, in_s, in_s)?;
+    Ok(if exact { in_s.clamp(s.actual_in_s, s.actual_out_s) } else { s.actual_in_s })
+}
+
+/// `<export folder>/<Game>_<date>.mp4` for the in point, made unique.
 #[tauri::command]
 #[specta::specta]
-pub async fn default_export_path(app: AppHandle, id: String, in_s: f64) -> AppResult<PathBuf> {
+pub async fn default_export_path(app: AppHandle, id: String, in_s: f64, exact: bool) -> AppResult<PathBuf> {
     blocking(move || {
         let detail = session(&app, &id)?;
-        let s = snap(&detail, in_s, in_s)?;
+        let t = name_time(&detail, in_s, exact)?;
         let dir = export_dir(&app, &detail.summary.account_id)?;
-        let name = export::default_file_name(&detail.summary.game_name, &detail.summary.started_at, s.actual_in_s);
+        let name = export::default_file_name(&detail.summary.game_name, &detail.summary.started_at, t);
         Ok(export::dedupe(&dir.join(name)))
     })
     .await
 }
 
-/// Exports the selection with stream copy. `job_id` is chosen by the frontend for `cancel_job`.
+/// Exports the selection (stream copy or re-encode). `job_id` is chosen by the frontend for
+/// `cancel_job`.
 #[tauri::command]
 #[specta::specta]
 pub async fn export_clip(
     app: AppHandle,
     state: State<'_, MediaState>,
+    preview: State<'_, PreviewState>,
     req: ExportRequest,
     job_id: String,
     progress: Channel<Progress>,
 ) -> AppResult<ExportResult> {
     let job = state.start_job(&job_id);
+    let exact = matches!(req.mode, ExportMode::Precise(_));
     let (detail, snap, out) = {
         let (app, req) = (app.clone(), req.clone());
         blocking(move || {
@@ -552,8 +574,8 @@ pub async fn export_clip(
                 Some(p) => p,
                 None => {
                     let dir = export_dir(&app, &detail.summary.account_id)?;
-                    let name =
-                        export::default_file_name(&detail.summary.game_name, &detail.summary.started_at, s.actual_in_s);
+                    let t = name_time(&detail, req.in_s.min(req.out_s), exact)?;
+                    let name = export::default_file_name(&detail.summary.game_name, &detail.summary.started_at, t);
                     export::dedupe(&dir.join(name))
                 }
             };
@@ -562,6 +584,21 @@ pub async fn export_clip(
         .await?
     };
     let paths = ffmpeg_paths(&app, &state).await?;
+    let (plan, actual_in_s, actual_out_s) = match req.mode {
+        ExportMode::Fast => (export::Plan::Copy, snap.actual_in_s, snap.actual_out_s),
+        ExportMode::Precise(opts) => {
+            let caps = capabilities(&state, &paths).await;
+            let backend = preview_backend(&app, &preview, &state, &paths, &detail).await;
+            let choice = encoders::choose(backend, opts.codec, &caps)
+                .ok_or_else(|| AppError::Ffmpeg(format!("this ffmpeg has no {:?} encoder", opts.codec)))?;
+            let fallback = encoders::software(opts.codec, &caps);
+            let frame_s = 1.0 / f64::from(opts.fps.unwrap_or(60).max(1));
+            let range = export::precise_range(&snap, req.in_s, req.out_s, frame_s);
+            let src = detail.mpd.as_ref().and_then(|m| m.video.width.zip(m.video.height));
+            let (a, b) = (range.actual_in_s, range.actual_out_s);
+            (export::Plan::Encode { choice, fallback, opts, src, range }, a, b)
+        }
+    };
     let job_dir = export_cache_dir(&app)?.join(&job_id);
     let seg = detail.mpd.as_ref().map_or(3.0, |m| m.segment_duration_s);
     let title = format!("{} {}", detail.summary.game_name, detail.summary.started_at);
@@ -569,8 +606,58 @@ pub async fn export_clip(
         let _ = progress.send(Progress { fraction });
     });
     let started = std::time::Instant::now();
-    let size_bytes =
-        export::export(&paths, &detail.summary.dir, &snap, seg, &title, &out, &job_dir, on_progress, &job.token).await?;
-    log::info!("exported {} chunks to {} in {:?}", snap.chunks(), out.display(), started.elapsed());
-    Ok(ExportResult { path: out, actual_in_s: snap.actual_in_s, actual_out_s: snap.actual_out_s, size_bytes })
+    let done = export::export(&paths, &detail.summary.dir, &snap, seg, &title, &out, &job_dir, &plan, on_progress, &job.token)
+        .await?;
+    log::info!(
+        "exported {} chunks to {} with {}{} in {:?}",
+        snap.chunks(),
+        out.display(),
+        done.encoder,
+        if done.fell_back { " (software fallback)" } else { "" },
+        started.elapsed()
+    );
+    Ok(ExportResult {
+        path: out,
+        actual_in_s,
+        actual_out_s,
+        size_bytes: done.size_bytes,
+        encoder: done.encoder,
+        fell_back: done.fell_back,
+    })
+}
+
+/// Codecs a precise export can use with this ffmpeg and the session's GPU family.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_export_capabilities(
+    app: AppHandle,
+    state: State<'_, MediaState>,
+    preview: State<'_, PreviewState>,
+    id: String,
+) -> AppResult<Vec<VideoCodec>> {
+    let detail = {
+        let (app, id) = (app.clone(), id.clone());
+        blocking(move || session(&app, &id)).await?
+    };
+    let paths = ffmpeg_paths(&app, &state).await?;
+    let caps = capabilities(&state, &paths).await;
+    let backend = preview_backend(&app, &preview, &state, &paths, &detail).await;
+    Ok(VideoCodec::ALL.into_iter().filter(|&c| encoders::choose(backend, c, &caps).is_some()).collect())
+}
+
+const EXPORT_MODE_KEY: &str = "exportMode";
+const EXPORT_PRECISE_KEY: &str = "exportPrecise";
+
+/// The last used export mode, preset and custom options.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_export_prefs(app: AppHandle) -> AppResult<ExportPrefs> {
+    Ok(ExportPrefs { mode: read_setting(&app, EXPORT_MODE_KEY), precise: read_setting(&app, EXPORT_PRECISE_KEY) })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_export_prefs(app: AppHandle, prefs: ExportPrefs) -> AppResult<()> {
+    write_setting(&app, EXPORT_MODE_KEY, prefs.mode)?;
+    write_setting(&app, EXPORT_PRECISE_KEY, prefs.precise)
 }

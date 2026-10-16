@@ -94,7 +94,7 @@ export function WaveformPanel({ detail, onError }: Props) {
         gaps={status.meta.gaps}
         segS={detail.mpd?.segmentDurationS ?? 3}
       />
-      <ExportPanel id={id} onError={onError} />
+      <ExportPanel id={id} video={detail.mpd?.video ?? null} onError={onError} />
       <h2>
         Loud moments <span className="count">{status.spikes.length}</span>
       </h2>

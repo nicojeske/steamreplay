@@ -39,8 +39,8 @@ pub struct PreciseOpts {
     codec: VideoCodec,          // H264 | Hevc | Av1 (Av1 only if an encoder exists)
     max_height: Option<u32>,    // 1080, 720, …; keeps aspect, never upscales
     fps: Option<u32>,           // 60 | 30; None = source
-    crop_16_9: bool,            // centre crop for sources wider than 16:9
-    target: Quality,            // Crf(u8) | MaxSizeMb(u32)
+    crop_16x9: bool,            // centre crop for sources wider than 16:9 (JSON: crop16x9)
+    target: Quality,            // Crf { q: u8 } | MaxSizeMb { mb: u32 } (tagged with "kind")
 }
 pub struct ExportResult { path, actual_in_s, actual_out_s, size_bytes, encoder: String, fell_back: bool }
 ```
@@ -62,11 +62,12 @@ ffmpeg -hide_banner -nostdin -v error -progress pipe:2 -stats_period 0.5
 - `-ss`/`-t` come **after** `-i` (output options), so the cut is frame-accurate. Decoding is short because the input only holds the snapped chunks.
 - **Hardware decode without `-hwaccel_output_format`.** Frames are downloaded to system memory, so a single CPU filter chain works for every backend. For short clips this costs little. VAAPI is the exception: the encoder needs `format=nv12,hwupload` and `-vaapi_device`. VAAPI is Linux-only and best effort.
 - **`out_range=tv`.** Steam writes full-range `yuvj420p`. Converting to limited range avoids washed-out or crushed colours in Discord and Films & TV.
-- **Rounding.** Round `H` down to an even number, skip `scale` when the source is already ≤ `H`, and apply `crop` only when the source aspect is > 16:9 + 1 %.
+- **Rounding.** Round `H` down to an even number, skip the resize when the source is already ≤ `H` (`scale=out_range=tv` stays for the range conversion), and apply `crop` only when the source aspect is > 16:9 + 1 %. The source size comes from the manifest. Without it, `crop`/`scale` use `min()` expressions.
+- **Pixel format.** `yuv420p`, except `nv12` for QSV and `nv12,hwupload` for VAAPI (those encoders do not take `yuv420p`). `fps` comes before `format`.
 - Progress = `out_time_us / (out_s − in_s)`, mapped to 0.5–1 like Fast.
 
 ### 4.2 Encoders (`media/encoders.rs`, new)
-- `Capabilities { encoders: HashSet<String>, hwaccels: HashSet<String> }`: run `ffmpeg -encoders` and `ffmpeg -hwaccels` once per ffmpeg path, and cache the result in `MediaState` (clear it when `set_ffmpeg_dir` changes the path).
+- `Capabilities { encoders: HashSet<String>, hwaccels: HashSet<String> }`: run `ffmpeg -encoders` and `ffmpeg -hwaccels` once per ffmpeg path, and cache the result in `MediaState` together with that path (cleared by `set_ffmpeg`).
   - Move `transcode::list` and the parsing in `transcode::available` (`preview/transcode.rs:219-245`) here, and have the preview call the shared version, so the lists are no longer probed again on every detection.
 - **Vendor family** comes from the preview `Backend` already resolved by `preview_backend()` (`commands.rs:326`). `export_clip` therefore also takes `State<'_, PreviewState>`.
 
@@ -83,7 +84,7 @@ ffmpeg -hide_banner -nostdin -v error -progress pipe:2 -stats_period 0.5
   - `MaxSizeMb(m)`: `v_kbps = m·8·1000·0.95 / dur − 160`, giving `-b:v v -maxrate v -bufsize 2v`. NVENC also gets `-rc vbr`. If `v_kbps < 300`, the command fails with a clear `AppError` (the UI checks this first, see 4.3).
   - `Crf(q)`: `-cq q` (NVENC with `-rc vbr -b:v 0`), `-crf q` (x264/x265/svtav1), `-global_quality q` (QSV), `-qp q` (VAAPI), `-rc cqp -qp_i q -qp_p q` (AMF).
   - Presets: NVENC `-preset p5`, x264 `-preset medium`, x265 `-preset fast`, svtav1 `-preset 8`.
-- **Fallback.** If a hardware encode exits with an error (not `Cancelled` or `NotFound`), delete the `.part` file and run once more with the software encoder, then set `fell_back = true`. A common cause is that the NVENC session limit is reached while Steam itself is recording.
+- **Fallback.** If a hardware encode exits with an ffmpeg error (not `Cancelled` or `NotFound`), delete the `.part` file and run once more with the software encoder, then set `fell_back = true`. A common cause is that the NVENC session limit is reached while Steam itself is recording.
 
 ### 4.3 Frontend (`src/components/ExportPanel.tsx`)
 - **Mode switch** `Fast | Precise` next to the Export button.
@@ -118,13 +119,13 @@ ffmpeg -hide_banner -nostdin -v error -progress pipe:2 -stats_period 0.5
 - **Windows Defender** scanning the sidecar on the first run makes the first encode slow. That is acceptable; progress shows the delay.
 
 ## 6. Acceptance criteria
-- [ ] A precise export of a selection that does **not** start on a 3 s boundary starts on the chosen frame: the first frame of the export matches the preview frame at `in_s` ±1 frame.
-- [ ] The duration equals `out_s − in_s` ±1 frame.
+- [x] A precise export of a selection that does **not** start on a 3 s boundary starts on the chosen frame: the first frame of the export matches the preview frame at `in_s` ±1 frame.
+- [x] The duration equals `out_s − in_s` ±1 frame.
 - [ ] "Discord (10 MB)" gives a file ≤ 10 MB for a 30 s clip and plays in the Discord desktop client (inline preview).
 - [ ] "Original quality" gives HEVC at the source resolution and plays in VLC.
-- [ ] On the 32:9 sample, "Crop to 16:9" gives 2560×1440 (or scaled 16:9) with the centre of the image.
-- [ ] Colours match the preview: no washed-out blacks (check with `ffprobe` that `color_range=tv`).
-- [ ] With NVENC forced to fail (for example an unknown encoder option in a test build), the export still finishes and the job row shows "software fallback".
+- [x] On the 32:9 sample, "Crop to 16:9" gives 2560×1440 (or scaled 16:9) with the centre of the image.
+- [ ] Colours match the preview: no washed-out blacks (check with `ffprobe` that `color_range=tv`). (`color_range=tv` confirmed; the visual comparison is still to do.)
+- [x] With NVENC forced to fail (for example an unknown encoder option in a test build), the export still finishes and the job row shows "software fallback".
 - [ ] **Windows:** an H.264 precise export plays in Films & TV without the HEVC extension. NVENC is used on an NVIDIA teammate machine (the job row shows `h264_nvenc`).
 - [ ] Fast export still behaves exactly as in M3.
 - [ ] clippy, tests, tsc and lint are clean; CI is green.
@@ -146,6 +147,7 @@ ffmpeg -hide_banner -nostdin -v error -progress pipe:2 -stats_period 0.5
 - **Windows:** a teammate runs the presets and reports the encoder, time and whether Films & TV and Discord play the files.
 
 ## 8. Open questions / risks
+- **A/V offset.** The video and audio inputs each start at 0 after ffmpeg normalises them, as in M3's mux. Steam's small audio lead-in can therefore shift the audio by a few ms. Check this in the clap test.
 - **Encode speed.** A 30 s 5K source decoded via NVDEC and downloaded to system memory should run several times faster than realtime on an RTX 4080. If the download is the bottleneck, use a full-GPU chain for CUDA only (`-hwaccel_output_format cuda`, `scale_cuda`, `crop` via the `hevc_cuvid -crop` decoder option). Measure before optimising.
 - **Discord 10 MB vs 60 fps:** at 720p60 the bitrate allows about 30 s of clip. If quality is poor, change the preset to 30 fps. Decide after a test with real footage.
 - **AV1** depends on teammates' GPUs (RTX 40 for NVENC AV1) and on where clips are posted. It has the lowest priority; hide it when no encoder exists.

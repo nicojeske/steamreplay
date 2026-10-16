@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ExportModeKind } from "../bindings";
 
 /** Smallest visible span when zooming in. */
 export const MIN_SPAN_S = 2;
@@ -24,6 +25,8 @@ type ViewState = {
   outS: number | null;
   /** While playing, wrap from the out point back to the in point. */
   loop: boolean;
+  /** Fast cuts at chunk boundaries (the timeline draws them), Precise on the exact frames. Kept across sessions. */
+  exportMode: ExportModeKind;
   /** Shows the whole session and puts the playhead at 0. */
   reset: (durationS: number) => void;
   /** Moves the playhead without moving the video (used by the video itself). */
@@ -43,6 +46,7 @@ type ViewState = {
   setSelection: (a: number, b: number) => void;
   clearSelection: () => void;
   setLoop: (loop: boolean) => void;
+  setExportMode: (mode: ExportModeKind) => void;
 };
 
 function clampView(start: number, end: number, duration: number): [number, number] {
@@ -69,6 +73,7 @@ export const useView = create<ViewState>((set) => ({
   inS: null,
   outS: null,
   loop: false,
+  exportMode: "fast",
   reset: (durationS) =>
     set({
       durationS,
@@ -102,6 +107,7 @@ export const useView = create<ViewState>((set) => ({
   setSelection: (a, b) => set((st) => selection(a, b, st.durationS)),
   clearSelection: () => set({ inS: null, outS: null }),
   setLoop: (loop) => set({ loop }),
+  setExportMode: (exportMode) => set({ exportMode }),
 }));
 
 function selection(a: number, b: number, duration: number) {

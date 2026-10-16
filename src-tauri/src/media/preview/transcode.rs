@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::SegmentPlan;
 use crate::error::{AppError, AppResult};
+use crate::media::encoders::Capabilities;
 use crate::media::chunks::{AUDIO_INIT, VIDEO_INIT, audio_chunk, video_chunk};
 use crate::media::ffmpeg::{self, FfmpegPaths};
 
@@ -215,31 +216,14 @@ pub async fn transcode(
     Ok(())
 }
 
-/// Lines of `ffmpeg -<what>` (`encoders`, `hwaccels`).
-async fn list(paths: &FfmpegPaths, what: &str, cancel: &CancellationToken) -> String {
-    let mut cmd = ffmpeg::ffmpeg_command(paths, false);
-    cmd.arg(format!("-{what}"));
-    match ffmpeg::run(cmd, None, None, cancel).await {
-        Ok(out) => String::from_utf8_lossy(&out).into_owned(),
-        Err(e) => {
-            log::warn!("ffmpeg -{what}: {e}");
-            String::new()
-        }
-    }
-}
-
 /// Backends whose hwaccel and encoder this ffmpeg build has, in the order to try them.
-pub async fn available(paths: &FfmpegPaths, cancel: &CancellationToken) -> Vec<Backend> {
-    let encoders = list(paths, "encoders", cancel).await;
-    let hwaccels = list(paths, "hwaccels", cancel).await;
-    let has_encoder = |name: &str| encoders.lines().any(|l| l.split_whitespace().nth(1) == Some(name));
-    let has_hwaccel = |name: &str| hwaccels.lines().any(|l| l.trim() == name);
+pub fn available(caps: &Capabilities) -> Vec<Backend> {
     Backend::candidates()
         .iter()
         .copied()
         .filter(|b| {
             let (hw, enc) = b.needs();
-            has_encoder(enc) && hw.is_none_or(has_hwaccel)
+            caps.has_encoder(enc) && hw.is_none_or(|h| caps.has_hwaccel(h))
         })
         .collect()
 }
@@ -248,13 +232,14 @@ pub async fn available(paths: &FfmpegPaths, cancel: &CancellationToken) -> Vec<B
 /// Falls back to software when nothing else does (it is tried last anyway).
 pub async fn detect(
     paths: &FfmpegPaths,
+    caps: &Capabilities,
     dir: &Path,
     first_chunk: u32,
     tmp_dir: &Path,
     cancel: &CancellationToken,
 ) -> Backend {
     let plan = SegmentPlan { index: 0, chunks: vec![first_chunk], partial_last: Some(first_chunk) };
-    for backend in available(paths, cancel).await {
+    for backend in available(caps) {
         let out = tmp_dir.join(temp_name("probe.mp4"));
         let started = std::time::Instant::now();
         let attempt = tokio::time::timeout(
@@ -305,6 +290,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn available_backends() {
+        let caps = Capabilities::parse(
+            " V....D libx264  H.264\n V....D h264_nvenc  NVENC\n V....D h264_vaapi  VAAPI\n",
+            "Hardware acceleration methods:\ncuda\n",
+        );
+        // VAAPI encoder without the vaapi hwaccel is not usable for the preview.
+        assert_eq!(available(&caps), [Backend::Cuda, Backend::Software]);
+        assert_eq!(available(&Capabilities::default()), []);
+    }
+
     /// Needs ffmpeg/ffprobe on PATH and a real bg folder with at least 2 chunks, e.g. the saved
     /// clip: `STEAMREPLAY_SESSION_DIR=<…/clips/clip_1478500_…/video/bg_…> cargo test preview_fixture -- --ignored`.
     #[tokio::test]
@@ -324,7 +320,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let plan = super::super::segment_plan(&inv, 0).unwrap();
         let mut backends = vec![Backend::Software];
-        if available(&paths, &cancel).await.contains(&Backend::Cuda) {
+        if available(&Capabilities::probe(&paths, &cancel).await).contains(&Backend::Cuda) {
             backends.push(Backend::Cuda);
         }
         for backend in backends {
