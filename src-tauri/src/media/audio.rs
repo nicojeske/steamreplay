@@ -14,6 +14,7 @@ use specta::Type;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
+use super::chunks::{AUDIO_INIT, VIDEO_INIT, audio_chunk, probe_start, video_chunk};
 use super::ffmpeg::{self, FfmpegPaths, ProgressFn};
 use crate::error::{AppError, AppResult};
 use crate::steam::recordings::ChunkInventory;
@@ -26,17 +27,6 @@ pub const BINS_PER_S: f64 = 1000.0 / BIN_MS as f64;
 
 /// `[min, max, rms]` of one bin.
 pub type Bin = [f32; 3];
-
-const AUDIO_INIT: &str = "init-stream1.m4s";
-const VIDEO_INIT: &str = "init-stream0.m4s";
-
-fn audio_chunk(n: u32) -> String {
-    format!("chunk-stream1-{n:05}.m4s")
-}
-
-fn video_chunk(n: u32) -> String {
-    format!("chunk-stream0-{n:05}.m4s")
-}
 
 /// Consecutive chunk numbers whose audio file exists.
 #[derive(Debug, Clone, PartialEq)]
@@ -137,27 +127,6 @@ impl Binner {
         }
         self.bins
     }
-}
-
-async fn read_files(dir: &Path, names: &[String]) -> AppResult<Vec<u8>> {
-    let mut out = Vec::new();
-    for name in names {
-        let p = dir.join(name);
-        out.extend(tokio::fs::read(&p).await.map_err(|e| AppError::io(p.display(), e))?);
-    }
-    Ok(out)
-}
-
-/// `start_time` of the single stream in `init + chunk`, in seconds.
-async fn probe_start(paths: &FfmpegPaths, dir: &Path, init: &str, chunk: &str, cancel: &CancellationToken) -> AppResult<f64> {
-    let data = read_files(dir, &[init.to_owned(), chunk.to_owned()]).await?;
-    let mut cmd = ffmpeg::ffprobe_command(paths);
-    cmd.args(["-show_entries", "stream=start_time", "-of", "csv=p=0", "-i", "pipe:0"]);
-    let out = ffmpeg::run(cmd, Some(data), None, cancel).await?;
-    String::from_utf8_lossy(&out)
-        .lines()
-        .find_map(|l| l.trim().trim_end_matches(',').parse::<f64>().ok())
-        .ok_or_else(|| AppError::Ffmpeg(format!("no start time for {chunk}")))
 }
 
 /// Decodes one run. `written` counts bytes fed to ffmpeg for progress.

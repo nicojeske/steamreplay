@@ -3,6 +3,7 @@ mod error;
 mod media;
 mod steam;
 
+use tauri::{Manager, RunEvent};
 use tauri_specta::{Builder, collect_commands};
 
 fn specta_builder() -> Builder<tauri::Wry> {
@@ -19,6 +20,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::cancel_job,
         commands::get_ffmpeg_info,
         commands::set_ffmpeg_dir,
+        commands::get_preview_info,
+        commands::preview_playhead,
+        commands::preview_close,
+        commands::get_preview_settings,
+        commands::set_preview_settings,
+        commands::clear_preview_cache,
     ])
 }
 
@@ -49,9 +56,25 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(media::MediaState::default())
+        .setup(|app| {
+            app.manage(commands::init_preview(app.handle())?);
+            Ok(())
+        })
+        .register_asynchronous_uri_scheme_protocol("replay", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(media::preview::protocol::handle(&app, request).await);
+            });
+        })
         .invoke_handler(builder.invoke_handler())
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                // Kill running preview transcodes; child processes would outlive the app on Windows.
+                app.state::<media::preview::PreviewState>().shutdown();
+            }
+        });
 }
 
 #[cfg(all(test, debug_assertions))]

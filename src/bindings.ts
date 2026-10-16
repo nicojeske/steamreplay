@@ -37,6 +37,31 @@ export const commands = {
 	getFfmpegInfo: () => typedError<FfmpegPaths, AppError>(__TAURI_INVOKE("get_ffmpeg_info")),
 	/**  Sets (or clears) the folder that holds ffmpeg and ffprobe. */
 	setFfmpegDir: (path: string | null) => typedError<FfmpegPaths, AppError>(__TAURI_INVOKE("set_ffmpeg_dir", { path })),
+	/**  Opens the preview of a session and starts preparing the first segments. */
+	getPreviewInfo: (id: string) => typedError<PreviewInfo, AppError>(__TAURI_INVOKE("get_preview_info", { id })),
+	/**  Reorders the preview queue around the playhead (video time in seconds). */
+	previewPlayhead: (id: string, t: number | null) => typedError<null, AppError>(__TAURI_INVOKE("preview_playhead", { id, t })),
+	/**  Stops the session's preview jobs. */
+	previewClose: (id: string) => typedError<null, AppError>(__TAURI_INVOKE("preview_close", { id })),
+	getPreviewSettings: () => typedError<PreviewSettings, AppError>(__TAURI_INVOKE("get_preview_settings")),
+	/**
+	 *  `backend: None` returns to automatic detection, which runs again the next time a preview
+	 *  opens.
+	 */
+	setPreviewSettings: (backend: 
+/**  NVDEC + `scale_cuda` + NVENC (NVIDIA, Windows and Linux). */
+"cuda" | 
+/**  D3D11VA decode + AMF encode (AMD on Windows). Not tested on real hardware. */
+"d3d11vaAmf" | 
+/**  D3D11VA decode + Quick Sync encode (Intel on Windows). Not tested on real hardware. */
+"d3d11vaQsv" | 
+/**  VAAPI decode, scale and encode (AMD/Intel on Linux). */
+"vaapi" | 
+/**  Quick Sync decode and encode. */
+"qsv" | 
+/**  libx264. Works everywhere, but needs many CPU cores. */
+"software" | null, cacheMb: number) => typedError<null, AppError>(__TAURI_INVOKE("set_preview_settings", { backend, cacheMb })),
+	clearPreviewCache: () => typedError<null, AppError>(__TAURI_INVOKE("clear_preview_cache")),
 };
 
 /* Types */
@@ -46,6 +71,21 @@ export type AppError = {
 };
 
 export type AppErrorKind = "notFound" | "io" | "parse" | "store" | "ffmpeg" | "cancelled";
+
+/**  How a segment is decoded, scaled and encoded. */
+export type Backend = 
+/**  NVDEC + `scale_cuda` + NVENC (NVIDIA, Windows and Linux). */
+"cuda" | 
+/**  D3D11VA decode + AMF encode (AMD on Windows). Not tested on real hardware. */
+"d3d11vaAmf" | 
+/**  D3D11VA decode + Quick Sync encode (Intel on Windows). Not tested on real hardware. */
+"d3d11vaQsv" | 
+/**  VAAPI decode, scale and encode (AMD/Intel on Linux). */
+"vaapi" | 
+/**  Quick Sync decode and encode. */
+"qsv" | 
+/**  libx264. Works everywhere, but needs many CPU cores. */
+"software";
 
 /**  Based on the video stream files that exist on disk. */
 export type ChunkInventory = {
@@ -106,6 +146,23 @@ export type MpdInfo = {
 	audio: StreamInfo,
 	mediaTemplate: string,
 	initTemplate: string,
+};
+
+export type PreviewInfo = {
+	segmentS: number,
+	count: number,
+	/**  For `MediaSource.addSourceBuffer`. */
+	mime: string,
+	fps: number,
+	backend: Backend,
+};
+
+export type PreviewSettings = {
+	/**  Chosen in the settings; `None` means detect automatically. */
+	backend: Backend | null,
+	detected: Backend | null,
+	cacheMb: number,
+	cacheBytes: number,
 };
 
 export type Progress = {

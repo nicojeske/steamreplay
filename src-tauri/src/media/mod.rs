@@ -1,6 +1,8 @@
 //! ffmpeg-based media work: audio analysis (M2), later export and preview.
 
 pub mod audio;
+pub mod chunks;
+pub mod preview;
 pub mod ffmpeg;
 pub mod pyramid;
 pub mod spikes;

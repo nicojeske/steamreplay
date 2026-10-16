@@ -4,6 +4,7 @@ import { commands, type Progress, type SessionDetail, type Spike, type WaveformM
 import { IpcError, unwrap } from "../lib/ipc";
 import { WaveformTiles } from "../lib/waveform";
 import { useView } from "../state/view";
+import { Player } from "./Player";
 import { Timeline } from "./Timeline";
 import { SpikeList } from "./SpikeList";
 
@@ -84,6 +85,7 @@ export function WaveformPanel({ detail, onError }: Props) {
   }
   return (
     <div className="waveform-panel">
+      <Player id={id} />
       <Timeline tiles={tiles} spikes={status.spikes} markers={detail.markers} gaps={status.meta.gaps} />
       <h2>
         Loud moments <span className="count">{status.spikes.length}</span>

@@ -3637,6 +3637,7 @@ dependencies = [
  "keyvalues-parser",
  "log",
  "lru",
+ "percent-encoding",
  "quick-xml 0.38.4",
  "regex",
  "serde",

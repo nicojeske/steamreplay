@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Spike } from "../bindings";
 import { formatTimecode } from "../lib/format";
+import { isTyping } from "../lib/keys";
 import { useView, zoomToRange } from "../state/view";
 
 type Props = { spikes: Spike[] };
@@ -11,12 +12,8 @@ function goTo(spikes: Spike[], i: number) {
   if (!s) return;
   const view = useView.getState();
   view.selectSpike(i);
-  view.setPlayhead(s.startS);
+  view.seek(s.startS);
   zoomToRange(s.startS, s.endS);
-}
-
-function isTyping(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 }
 
 /** Ranked loud regions. `N`/`P` step by rank, `Shift+N`/`Shift+P` step in time order. */

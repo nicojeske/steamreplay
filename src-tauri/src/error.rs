@@ -3,7 +3,7 @@ use specta::Type;
 
 /// The single error type returned by every command.
 /// Serialises to `{ kind, message }` for the frontend.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum AppError {
     #[error("{0}")]
     NotFound(String),

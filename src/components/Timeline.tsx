@@ -251,6 +251,7 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
       const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
       if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
         const d = (e.shiftKey ? delta || e.deltaX : e.deltaX) * (span / w);
+        useView.getState().setFollow(false);
         setView(viewStartS + d, viewEndS + d);
         return;
       }
@@ -270,6 +271,7 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
     e.currentTarget.setPointerCapture(e.pointerId);
     const { viewStartS, viewEndS, durationS, setView } = useView.getState();
     if (localY(e) < OVERVIEW_H) {
+      useView.getState().setFollow(false);
       const t = (localX(e) / Math.max(1, props.current.width)) * durationS;
       if (t < viewStartS || t > viewEndS) {
         const half = (viewEndS - viewStartS) / 2;
@@ -295,7 +297,10 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
       return;
     }
     if (d?.kind === "main") {
-      if (Math.abs(x - d.startX) > DRAG_THRESHOLD_PX) d.moved = true;
+      if (Math.abs(x - d.startX) > DRAG_THRESHOLD_PX) {
+        if (!d.moved) useView.getState().setFollow(false);
+        d.moved = true;
+      }
       if (d.moved) {
         const [s0, s1] = d.startView;
         const dt = ((d.startX - x) / w) * (s1 - s0);
@@ -326,7 +331,7 @@ export function Timeline({ tiles, spikes, markers, gaps }: Props) {
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const d = drag.current;
     drag.current = null;
-    if (d?.kind === "main" && !d.moved) useView.getState().setPlayhead(timeAtX(localX(e)));
+    if (d?.kind === "main" && !d.moved) useView.getState().seek(timeAtX(localX(e)));
   };
 
   const onDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {

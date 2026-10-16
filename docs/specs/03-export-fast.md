@@ -4,7 +4,7 @@
 Set an in point and an out point on the timeline, by key, by dragging, or with "use spike region". Then press **Export**. In a few seconds an MP4 with the original quality (HEVC + AAC, no re-encode) appears in the export folder. The cut snaps to the 3 s chunk boundaries around the selection.
 
 ## 2. Prerequisites
-- M1 (sessions, chunk inventory, `export_dir` from `localconfig.vdf`) and M2 (timeline, playhead, spikes, `media/ffmpeg.rs`).
+- M1 (sessions, chunk inventory, `export_dir` from `localconfig.vdf`), M2 (timeline, playhead, spikes, `media/ffmpeg.rs`) and **M4** (built before this one): the preview `Player`, `useView.seek`/`playing`, and `media/chunks.rs` for chunk names and joining.
 - `00-overview.md`: DASH layout and "Steam's files are read-only".
 
 ## 3. Scope / non-goals
@@ -12,7 +12,6 @@ Set an in point and an out point on the timeline, by key, by dragging, or with "
 
 **Non-goals:**
 - frame-accurate cuts and re-encoding or resizing (M5),
-- video preview (M4),
 - uploading or sharing.
 
 ## 4. Design
@@ -55,10 +54,12 @@ Progress: phase `Snapshot` (chunks copied / total) → `Mux` (from ffmpeg progre
   - drag on the timeline with Alt (or in a separate selection lane under the waveform) to make a range,
   - drag the edges to adjust,
   - `Esc` clears the selection,
+  - **loop selection** (toggle `Ctrl+L`, moved here from M4): while there is an in/out selection, the preview player loops inside it. Implement it in `Player.tsx` (on each frame callback: if `currentTime >= out`, `seek(in)`). This helps fine-tuning before export,
   - in the spike list, "Select" on a spike sets in/out to the spike region.
 - The selection is drawn as a band with **ghost edges** that show where the snapped chunk boundaries really fall.
 - **Export panel:** shows selection length, snapped length and estimated size (`chunks × average chunk size`), plus an editable output path with a "Browse…" button (`tauri-plugin-dialog` save) and an Export button. After the export: "Show in folder" (`tauri-plugin-opener` reveal) and "Copy path".
 - Several exports can run one after another. A small job list shows their status.
+- The export panel has a "Play selection" button that seeks the player to the in point and plays with loop on.
 
 ## 5. Edge cases
 - `in_s ≥ out_s`, or the selection is shorter than one chunk: still export at least 1 chunk (3 s).
@@ -75,6 +76,7 @@ Progress: phase `Snapshot` (chunks copied / total) → `Mux` (from ffmpeg progre
 - [ ] Cancelling mid-export leaves no `.part` file and no job folder.
 - [ ] On Windows: export to the default `ExportDirectory` and to a folder on another drive. Both files play in VLC. Playing in the Films & TV app needs the paid "HEVC Video Extensions", so tell teammates to use VLC or wait for H.264 precise export (M5).
 - [ ] Export from a pruned session (startNumber 3418) uses the correct chunks: the audio waveform of the export matches the selection.
+- [ ] Loop selection: with Ctrl+L on, playback wraps from the out point back to the in point without a visible stall when both are in the buffered run.
 - [ ] clippy, tests, tsc and lint are clean.
 
 ## 7. Verification steps
