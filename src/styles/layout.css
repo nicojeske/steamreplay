@@ -437,6 +437,12 @@
 .advanced-grid { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
 .detection-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: var(--text-sm); }
 
+.labelling-header { margin: 0; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
+.rating-chip { width: 52px; text-align: center; border-radius: var(--radius-sm); font-size: var(--text-xs); padding: 1px 0; }
+.rating-chip.unrated { color: var(--faint); }
+.rating-chip.good { background: color-mix(in srgb, var(--success) 22%, transparent); color: var(--success); }
+.rating-chip.meh { background: var(--warn-soft); color: var(--warn); }
+.rating-chip.bad { background: var(--danger-soft); color: var(--danger); }
 .moments-controls { display: flex; align-items: center; gap: 8px; padding: var(--space-3) var(--space-4) var(--space-2); }
 .moments { margin: 0; padding: 0 var(--space-2) var(--space-3); list-style: none; }
 .moment {

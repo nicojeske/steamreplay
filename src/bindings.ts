@@ -124,6 +124,13 @@ export const commands = {
 } | null) => typedError<null, AppError>(__TAURI_INVOKE("set_spike_defaults", { params })),
 	/**  Removes every game's preset. */
 	clearSpikePresets: () => typedError<null, AppError>(__TAURI_INVOKE("clear_spike_presets")),
+	/**  Where the experiment scripts put candidate pools and read the ratings. */
+	labelsDir: () => typedError<string, AppError>(__TAURI_INVOKE("labels_dir")),
+	/**  The session's candidate pool in time order, or `None` when the scripts made none. */
+	getLabelPool: (id: string) => typedError<PoolCandidate[] | null, AppError>(__TAURI_INVOKE("get_label_pool", { id })),
+	getLabels: (id: string) => typedError<Label[], AppError>(__TAURI_INVOKE("get_labels", { id })),
+	/**  Replaces the rating of the same candidate (or missed moment), or removes it. Returns all labels. */
+	setLabel: (id: string, label: Label, remove: boolean) => typedError<Label[], AppError>(__TAURI_INVOKE("set_label", { id, label, remove })),
 	getExportDirOverride: () => typedError<string | null, AppError>(__TAURI_INVOKE("get_export_dir_override")),
 	/**  `None` returns to the account's Steam export folder. */
 	setExportDirOverride: (path: string | null) => typedError<null, AppError>(__TAURI_INVOKE("set_export_dir_override", { path })),
@@ -317,6 +324,15 @@ export type Gap = {
 	endS: number,
 };
 
+/**  Times are stored with the label, so it still matches by overlap after the pool is rebuilt. */
+export type Label = {
+	/**  `None` for `Missed`. */
+	candidateId: string | null,
+	startS: number,
+	endS: number,
+	rating: Rating,
+};
+
 export type LevelInfo = {
 	bins: number,
 	binMs: number,
@@ -346,6 +362,13 @@ export type MpdInfo = {
 	audio: StreamInfo,
 	mediaTemplate: string,
 	initTemplate: string,
+};
+
+/**  A region to rate. The pool does not say which method found it, so the rating is blind. */
+export type PoolCandidate = {
+	id: string,
+	startS: number,
+	endS: number,
 };
 
 export type PreciseOpts = {
@@ -406,6 +429,10 @@ export type Quality =
 { kind: "crf"; q: number } | 
 /**  Average bitrate chosen so the file stays below `mb` megabytes. */
 { kind: "maxSizeMb"; mb: number };
+
+export type Rating = "good" | "meh" | "bad" | 
+/**  A good moment that no candidate covers; for recall. */
+"missed";
 
 export type RecentEntry = {
 	entry: RecentExport,

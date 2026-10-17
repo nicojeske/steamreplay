@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-export type ShortcutGroup = "Playback" | "Navigation" | "Selection" | "Timeline" | "General";
+export type ShortcutGroup = "Playback" | "Navigation" | "Selection" | "Timeline" | "General" | "Labelling";
 
 type Match = (e: KeyboardEvent) => boolean;
 
@@ -42,6 +42,10 @@ const DEFS = [
   { id: "library", keys: "Ctrl+B", action: "Show / hide the library", group: "General", match: ctrl("b") },
   { id: "settings", keys: "Ctrl+,", action: "Settings", group: "General", match: ctrl(",") },
   { id: "shortcuts", keys: "?", action: "Keyboard shortcuts", group: "General", match: symbol("?") },
+  { id: "rateGood", keys: "1", action: "Rate the candidate good (labelling mode)", group: "Labelling", match: symbol("1") },
+  { id: "rateMeh", keys: "2", action: "Rate the candidate meh (labelling mode)", group: "Labelling", match: symbol("2") },
+  { id: "rateBad", keys: "3", action: "Rate the candidate bad (labelling mode)", group: "Labelling", match: symbol("3") },
+  { id: "markMissed", keys: "X", action: "Mark a missed moment at the playhead (labelling mode)", group: "Labelling", match: plain("x") },
 ] as const satisfies readonly { id: string; keys: string; action: string; group: ShortcutGroup; match: Match }[];
 
 export type ShortcutId = (typeof DEFS)[number]["id"];
@@ -49,7 +53,7 @@ export type ShortcutId = (typeof DEFS)[number]["id"];
 /** Every shortcut, for the `?` overlay and the tooltips. The handlers register with `useShortcut`. */
 export const SHORTCUTS: readonly { id: ShortcutId; keys: string; action: string; group: ShortcutGroup }[] = DEFS;
 
-export const SHORTCUT_GROUPS: ShortcutGroup[] = ["Playback", "Navigation", "Selection", "Timeline", "General"];
+export const SHORTCUT_GROUPS: ShortcutGroup[] = ["Playback", "Navigation", "Selection", "Timeline", "General", "Labelling"];
 
 export function shortcutKeys(id: ShortcutId): string {
   return DEFS.find((d) => d.id === id)?.keys ?? "";

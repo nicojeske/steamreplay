@@ -11,7 +11,7 @@ SteamReplay is a small desktop tool that:
 3. shows Steam's own markers on the same timeline,
 4. lets you preview the video, set in and out points, and export an MP4 clip.
 
-**Constraints:** typed languages only (no Python). Small, local and offline.
+**Constraints:** typed languages only (no Python). Small, local and offline. The one exception is throwaway research under `experiments/` (M14), which never ships.
 
 **Platforms:** **Windows is the main target**, because the teammates who will use the tool are on Windows. Development happens on Linux (CachyOS), which must work too. Because of this:
 - Every milestone ships a Windows build that a teammate can run. The CI workflow in M1 builds it.
@@ -211,5 +211,6 @@ steamreplay/
 | 11 | [11-direct-preview.md](11-direct-preview.md) | Play the original HEVC video in the preview; the 720p transcode is the fallback |
 | 12 | [12-fireshare-connect.md](12-fireshare-connect.md) | Connect to Fireshare in the browser (Discord login works); no hand-made upload token |
 | 13 | [13-volume-hover-frames.md](13-volume-hover-frames.md) | Volume and mute in the transport; video frames when hovering the timeline |
+| 14 | [14-ml-moments.md](14-ml-moments.md) | Experiments: which ML model finds voice reactions best (labelling mode, Python harness, results) |
 
 **Build order: 01 → 02 → 04 → 03 → 05 → 06 → 08 → 09 → 10 → 11 → 13.** M4 (preview) comes before M3 (export): choosing in and out points makes much more sense when you can see the video. The file numbers were kept, so the M3/M4 labels in the specs still refer to the files.

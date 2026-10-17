@@ -3,17 +3,23 @@ import { commands, type SpikeParams } from "../../bindings";
 import { unwrap } from "../../lib/ipc";
 import { sensitivityToThreshold, thresholdToSensitivity } from "../../lib/spikeTuning";
 import { toast } from "../../state/toasts";
+import { useUi } from "../../state/ui";
+import { PathActions } from "../PathActions";
 import { Button } from "../ui/Button";
 import { Field } from "../ui/Field";
+import { Segmented } from "../ui/Segmented";
 import { Slider } from "../ui/Slider";
 
 /** Default sensitivity for games without their own tuning, and resetting the game presets. */
 export function SpikeSection() {
   const [defaults, setDefaults] = useState<SpikeParams | null>(null);
   const [cleared, setCleared] = useState(false);
+  const labelling = useUi((s) => s.labelling);
+  const [labelsDir, setLabelsDir] = useState<string | null>(null);
 
   useEffect(() => {
     unwrap(commands.getSpikeDefaults()).then(setDefaults, toast.error);
+    unwrap(commands.labelsDir()).then(setLabelsDir, toast.error);
   }, []);
 
   const save = async (p: SpikeParams | null) => {
@@ -60,6 +66,31 @@ export function SpikeSection() {
         <Button onClick={() => void clearPresets()} disabled={cleared}>
           {cleared ? "Reset ✓" : "Reset all games"}
         </Button>
+      </Field>
+      <Field
+        label="Labelling mode"
+        description={
+          <>
+            For the detection experiments: the Moments tab shows the candidates from{" "}
+            <span className="mono">experiments/moments</span> to rate with 1/2/3, and X marks a missed moment.
+            {labelsDir && (
+              <>
+                {" "}
+                Labels folder: <span className="mono break">{labelsDir}</span> {labelling && <PathActions path={labelsDir} />}
+              </>
+            )}
+          </>
+        }
+      >
+        <Segmented
+          label="Labelling mode"
+          value={labelling ? "on" : "off"}
+          options={[
+            { value: "off", label: "Off" },
+            { value: "on", label: "On" },
+          ]}
+          onChange={(v) => useUi.getState().set({ labelling: v === "on" })}
+        />
       </Field>
     </>
   );

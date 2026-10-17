@@ -288,6 +288,80 @@ mod tests {
         assert_eq!(*c1, spikes::curves(a.pyramid.level0(), 250, 30.0));
     }
 
+    /// 32-bit float mono WAV.
+    fn write_wav(path: &Path, samples: &[f32], rate: u32) {
+        let data_len = (samples.len() * 4) as u32;
+        let mut out = Vec::with_capacity(44 + data_len as usize);
+        out.extend(b"RIFF");
+        out.extend((36 + data_len).to_le_bytes());
+        out.extend(b"WAVEfmt ");
+        out.extend(16u32.to_le_bytes());
+        out.extend(3u16.to_le_bytes()); // IEEE float
+        out.extend(1u16.to_le_bytes()); // mono
+        out.extend(rate.to_le_bytes());
+        out.extend((rate * 4).to_le_bytes());
+        out.extend(4u16.to_le_bytes());
+        out.extend(32u16.to_le_bytes());
+        out.extend(b"data");
+        out.extend(data_len.to_le_bytes());
+        for s in samples {
+            out.extend(s.to_le_bytes());
+        }
+        std::fs::write(path, out).unwrap();
+    }
+
+    /// M14 experiment input: `STEAMREPLAY_SESSION_DIR=<bg folder> cargo test --release dump_experiment --
+    /// --ignored --nocapture` writes `experiments/moments/data/<stem>/{audio.wav,baseline.json}`.
+    /// 16 kHz mono, sample 0 = video time 0, placed exactly like the waveform.
+    #[tokio::test]
+    #[ignore]
+    async fn dump_experiment() {
+        const RATE: u32 = 16_000;
+        let Ok(dir) = std::env::var("STEAMREPLAY_SESSION_DIR") else {
+            eprintln!("STEAMREPLAY_SESSION_DIR not set, skipping");
+            return;
+        };
+        let dir = PathBuf::from(dir);
+        // <account>/gamerecordings/video/<folder>: the id `list_sessions` gives a background recording.
+        let name = |p: &Path| p.file_name().unwrap().to_string_lossy().into_owned();
+        let id = format!("{}/bg/{}", name(dir.ancestors().nth(3).unwrap()), name(&dir));
+        let out = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../experiments/moments/data")
+            .join(crate::labels::file_stem(&id));
+        std::fs::create_dir_all(&out).unwrap();
+        let (inv, _) = inventory(&dir).unwrap();
+        let paths = ffmpeg::locate(None).unwrap();
+        let cancel = CancellationToken::new();
+
+        let t = Instant::now();
+        let samples = audio::extract_samples(&paths, &dir, &inv, DEFAULT_SEGMENT_S, RATE, &cancel).await.unwrap();
+        let t_samples = t.elapsed();
+        write_wav(&out.join("audio.wav"), &samples, RATE);
+        let (level0, _) =
+            audio::extract(&paths, &dir, &inv, DEFAULT_SEGMENT_S, Arc::new(|_| {}), &cancel).await.unwrap();
+
+        // Alignment check: the first audible sample and bin must agree to within a bin.
+        let first_sample = samples.iter().position(|s| s.abs() > 1e-3).unwrap_or(0) as f64 / f64::from(RATE);
+        let first_bin = level0.iter().position(|b| b[1].max(-b[0]) > 1e-3).unwrap_or(0) as f64 / audio::BINS_PER_S;
+        assert!((first_sample - first_bin).abs() <= 0.011, "sample {first_sample} s vs bin {first_bin} s");
+
+        let default = spikes::SpikeParams::default();
+        let loose = spikes::SpikeParams { threshold_db: 6.0, max_results: 1000, ..default.clone() };
+        let baseline = serde_json::json!({
+            "id": id,
+            "durationS": samples.len() as f64 / f64::from(RATE),
+            "default": spikes::detect(&level0, &default),
+            "loose": spikes::detect(&level0, &loose),
+        });
+        std::fs::write(out.join("baseline.json"), serde_json::to_vec_pretty(&baseline).unwrap()).unwrap();
+        eprintln!(
+            "{id}: {} samples ({:.0} s) in {t_samples:?}; first sound at {first_sample:.3} s (bins: {first_bin:.2} s) → {}",
+            samples.len(),
+            samples.len() as f64 / f64::from(RATE),
+            out.display()
+        );
+    }
+
     #[tokio::test]
     #[ignore]
     async fn real_session() {

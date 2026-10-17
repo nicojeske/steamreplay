@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Channel } from "@tauri-apps/api/core";
-import { commands, type Progress, type SessionDetail, type Spike, type SpikeParams, type WaveformMeta } from "../../bindings";
+import {
+  commands,
+  type Label,
+  type PoolCandidate,
+  type Progress,
+  type SessionDetail,
+  type Spike,
+  type SpikeParams,
+  type WaveformMeta,
+} from "../../bindings";
 import { IpcError, errorMessage, unwrap } from "../../lib/ipc";
 import { paramsEqual } from "../../lib/spikeTuning";
 import { WaveformTiles } from "../../lib/waveform";
 import { toast } from "../../state/toasts";
+import { useUi } from "../../state/ui";
 import { useView } from "../../state/view";
 
 export type AnalysisStatus =
@@ -177,11 +187,51 @@ export function useAnalysis(detail: SessionDetail) {
 
   const tiles = useMemo(() => (status.kind === "ready" ? new WaveformTiles(id, status.meta) : null), [id, status]);
 
+  // --- labelling (M14) -----------------------------------------------------------------------
+
+  const labellingOn = useUi((s) => s.labelling);
+  // Keyed by session, so a stale result of the previous session is never shown.
+  const [lab, setLab] = useState<{ id: string; pool: PoolCandidate[] | null; labels: Label[] } | null>(null);
+  useEffect(() => {
+    if (!labellingOn) return;
+    let active = true;
+    Promise.all([unwrap(commands.getLabelPool(id)), unwrap(commands.getLabels(id))]).then(([pool, labels]) => {
+      if (active) setLab({ id, pool, labels });
+    }, toast.error);
+    return () => {
+      active = false;
+    };
+  }, [id, labellingOn]);
+  const current = labellingOn && lab?.id === id ? lab : null;
+  const pool = current?.pool ?? null;
+  const labels = useMemo(() => current?.labels ?? [], [current]);
+  // The pool as spikes, in time order, so the timeline and the list show it unchanged.
+  const poolSpikes = useMemo(
+    () => pool?.map((c): Spike => ({ startS: c.startS, endS: c.endS, peakS: c.startS, peakExcessDb: 0, score: 1 })) ?? null,
+    [pool],
+  );
+  const usingPool = labellingOn && poolSpikes !== null;
+  useEffect(() => useView.getState().selectSpike(null), [usingPool]);
+
+  const saveLabel = useCallback(
+    async (label: Label, remove = false) => {
+      try {
+        const labels = await unwrap(commands.setLabel(id, label, remove));
+        setLab((l) => (l?.id === id ? { ...l, labels } : l));
+      } catch (e) {
+        toast.error(e);
+      }
+    },
+    [id],
+  );
+
   return {
     status,
     tiles,
     params,
-    spikes,
+    spikes: usingPool ? poolSpikes : spikes,
+    /** Labelling mode: `pool` is null when the scripts made no pool for this session. */
+    labelling: labellingOn ? { pool, labels, saveLabel } : null,
     /** A spike request with the current params is still running. */
     busy,
     changeParams,

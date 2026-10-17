@@ -22,6 +22,8 @@ type Prefs = {
   loudnessLane: boolean;
   momentsFilter: MomentsFilter;
   momentsSort: MomentsSort;
+  /** M14: rate the experiment's candidate pool instead of tuning the detector. */
+  labelling: boolean;
   /** Preview volume, 0–1 on the slider (the video gets its square). */
   volume: number;
   muted: boolean;
@@ -54,6 +56,7 @@ const DEFAULTS: Prefs = {
   loudnessLane: false,
   momentsFilter: "all",
   momentsSort: "rank",
+  labelling: false,
   volume: 1,
   muted: false,
 };

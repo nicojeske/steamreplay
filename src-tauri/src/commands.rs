@@ -12,6 +12,7 @@ use tauri_plugin_store::StoreExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, AppResult};
+use crate::labels::{self, Label, PoolCandidate};
 use crate::fireshare::{self, ConnectInfo, FireshareConfig, FireshareOptions, UploadMeta, UploadResult};
 use crate::media::ffmpeg::{self, FfmpegPaths};
 use crate::media::pyramid::Samples;
@@ -350,6 +351,44 @@ pub async fn set_spike_defaults(app: AppHandle, params: Option<SpikeParams>) -> 
 #[specta::specta]
 pub async fn clear_spike_presets(app: AppHandle) -> AppResult<()> {
     write_setting::<SpikePresets>(&app, SPIKE_PRESETS_KEY, None)
+}
+
+// --- labelling (M14) -------------------------------------------------------------------------------
+
+/// Where the experiment scripts put candidate pools and read the ratings.
+#[tauri::command]
+#[specta::specta]
+pub async fn labels_dir(app: AppHandle) -> AppResult<PathBuf> {
+    Ok(app.path().app_data_dir().map_err(|e| AppError::Io(format!("no data folder: {e}")))?.join("labels"))
+}
+
+/// The session's candidate pool in time order, or `None` when the scripts made none.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_label_pool(app: AppHandle, id: String) -> AppResult<Option<Vec<PoolCandidate>>> {
+    let dir = labels_dir(app).await?;
+    blocking(move || Ok(labels::load_pool(&dir, &id))).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_labels(app: AppHandle, id: String) -> AppResult<Vec<Label>> {
+    let dir = labels_dir(app).await?;
+    blocking(move || Ok(labels::load_labels(&dir, &id))).await
+}
+
+/// Replaces the rating of the same candidate (or missed moment), or removes it. Returns all labels.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_label(app: AppHandle, id: String, label: Label, remove: bool) -> AppResult<Vec<Label>> {
+    let dir = labels_dir(app).await?;
+    blocking(move || {
+        let mut all = labels::load_labels(&dir, &id);
+        labels::apply(&mut all, label, remove);
+        labels::save_labels(&dir, &id, &all)?;
+        Ok(all)
+    })
+    .await
 }
 
 #[tauri::command]

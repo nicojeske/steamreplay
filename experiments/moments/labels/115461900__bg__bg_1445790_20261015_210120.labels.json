@@ -1,0 +1,239 @@
+{
+  "version": 1,
+  "labels": [
+    {
+      "candidateId": "c001",
+      "startS": 355.5,
+      "endS": 364.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c002",
+      "startS": 692.5,
+      "endS": 700.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c003",
+      "startS": 861.5,
+      "endS": 865.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c004",
+      "startS": 1030.5,
+      "endS": 1038.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c005",
+      "startS": 1099.23,
+      "endS": 1112.42,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c006",
+      "startS": 1114.67,
+      "endS": 1124.61,
+      "rating": "meh"
+    },
+    {
+      "candidateId": "c007",
+      "startS": 1197.5,
+      "endS": 1208.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c008",
+      "startS": 1207.5,
+      "endS": 1218.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c009",
+      "startS": 1350.5,
+      "endS": 1356.0,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c010",
+      "startS": 1451.5,
+      "endS": 1472.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c011",
+      "startS": 1451.5,
+      "endS": 1472.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c012",
+      "startS": 1478.5,
+      "endS": 1486.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c013",
+      "startS": 1493.5,
+      "endS": 1501.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c014",
+      "startS": 1559.5,
+      "endS": 1571.5,
+      "rating": "meh"
+    },
+    {
+      "candidateId": "c015",
+      "startS": 1573.5,
+      "endS": 1580.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c016",
+      "startS": 1647.5,
+      "endS": 1667.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c017",
+      "startS": 1744.0,
+      "endS": 1750.0,
+      "rating": "meh"
+    },
+    {
+      "candidateId": "c018",
+      "startS": 1763.5,
+      "endS": 1774.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c019",
+      "startS": 1876.5,
+      "endS": 1881.5,
+      "rating": "bad"
+    },
+    {
+      "candidateId": "c020",
+      "startS": 1887.5,
+      "endS": 1893.5,
+      "rating": "bad"
+    },
+    {
+      "candidateId": "c021",
+      "startS": 1943.5,
+      "endS": 1948.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c022",
+      "startS": 1986.5,
+      "endS": 1991.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c023",
+      "startS": 2102.71,
+      "endS": 2110.82,
+      "rating": "bad"
+    },
+    {
+      "candidateId": "c024",
+      "startS": 2177.09,
+      "endS": 2198.53,
+      "rating": "bad"
+    },
+    {
+      "candidateId": "c025",
+      "startS": 2203.7,
+      "endS": 2220.81,
+      "rating": "bad"
+    },
+    {
+      "candidateId": "c026",
+      "startS": 2439.56,
+      "endS": 2456.59,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c027",
+      "startS": 2498.5,
+      "endS": 2510.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c028",
+      "startS": 2608.5,
+      "endS": 2614.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c029",
+      "startS": 2668.5,
+      "endS": 2677.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c030",
+      "startS": 2686.5,
+      "endS": 2706.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c031",
+      "startS": 2837.5,
+      "endS": 2847.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c032",
+      "startS": 2868.5,
+      "endS": 2874.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c033",
+      "startS": 3015.5,
+      "endS": 3023.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c034",
+      "startS": 3043.46,
+      "endS": 3060.54,
+      "rating": "bad"
+    },
+    {
+      "candidateId": "c035",
+      "startS": 3068.36,
+      "endS": 3077.41,
+      "rating": "meh"
+    },
+    {
+      "candidateId": "c036",
+      "startS": 3475.5,
+      "endS": 3484.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c037",
+      "startS": 3573.5,
+      "endS": 3581.5,
+      "rating": "good"
+    },
+    {
+      "candidateId": "c038",
+      "startS": 3622.8,
+      "endS": 3638.75,
+      "rating": "bad"
+    },
+    {
+      "candidateId": "c039",
+      "startS": 3670.45,
+      "endS": 3679.52,
+      "rating": "bad"
+    }
+  ]
+}

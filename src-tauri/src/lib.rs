@@ -1,6 +1,7 @@
 mod commands;
 mod error;
 mod fireshare;
+mod labels;
 mod media;
 mod steam;
 
@@ -40,6 +41,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::get_spike_defaults,
         commands::set_spike_defaults,
         commands::clear_spike_presets,
+        commands::labels_dir,
+        commands::get_label_pool,
+        commands::get_labels,
+        commands::set_label,
         commands::get_export_dir_override,
         commands::set_export_dir_override,
         commands::get_recent_exports,

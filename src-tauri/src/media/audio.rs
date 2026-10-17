@@ -129,19 +129,53 @@ impl Binner {
     }
 }
 
-/// Decodes one run. `written` counts bytes fed to ffmpeg for progress.
-async fn decode_run(
+/// Where `decode_run` puts the samples: bins for the waveform, or the samples themselves.
+pub trait Sink: Default + Send + 'static {
+    type Out: Send + 'static;
+    fn push(&mut self, s: f32);
+    fn finish(self) -> Self::Out;
+}
+
+impl Sink for Binner {
+    type Out = Vec<Bin>;
+    fn push(&mut self, s: f32) {
+        Binner::push(self, s);
+    }
+    fn finish(self) -> Vec<Bin> {
+        Binner::finish(self)
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+pub struct RawSamples(Vec<f32>);
+
+#[cfg(test)]
+impl Sink for RawSamples {
+    type Out = Vec<f32>;
+    fn push(&mut self, s: f32) {
+        self.0.push(s);
+    }
+    fn finish(self) -> Vec<f32> {
+        self.0
+    }
+}
+
+/// Decodes one run to mono at `rate`. `written` counts bytes fed to ffmpeg for progress.
+#[allow(clippy::too_many_arguments)]
+async fn decode_run<S: Sink>(
     paths: &FfmpegPaths,
     dir: &Path,
     run: &Run,
+    rate: u32,
     written: Arc<AtomicU64>,
     on_progress: ProgressFn,
     total_bytes: u64,
     cancel: &CancellationToken,
-) -> AppResult<Vec<Bin>> {
+) -> AppResult<S::Out> {
     let mut cmd = ffmpeg::ffmpeg_command(paths, false);
     cmd.args(["-i", "pipe:0", "-map", "0:a:0", "-vn", "-ac", "1", "-ar"])
-        .arg(SAMPLE_RATE.to_string())
+        .arg(rate.to_string())
         .args(["-f", "f32le", "pipe:1"])
         .stdin(std::process::Stdio::piped());
     let mut child = ffmpeg::spawn(&mut cmd)?;
@@ -153,7 +187,9 @@ async fn decode_run(
     let writer = tokio::spawn(async move {
         let mut last_reported = 0.0;
         for f in files {
-            let data = tokio::fs::read(&f).await.map_err(|e| AppError::io(f.display(), e))?;
+            let data = tokio::fs::read(&f)
+                .await
+                .map_err(|e| AppError::io(f.display(), e))?;
             if stdin.write_all(&data).await.is_err() {
                 break; // ffmpeg exited; its stderr tells why
             }
@@ -169,7 +205,7 @@ async fn decode_run(
 
     let mut stdout = child.stdout.take().expect("stdout is piped");
     let reader = tokio::spawn(async move {
-        let mut binner = Binner::default();
+        let mut sink = S::default();
         let mut buf = vec![0u8; 1 << 16];
         let mut carry = 0usize;
         loop {
@@ -180,25 +216,137 @@ async fn decode_run(
             let len = carry + n;
             let whole = len - len % 4;
             for b in buf[..whole].as_chunks::<4>().0 {
-                binner.push(f32::from_le_bytes(*b));
+                sink.push(f32::from_le_bytes(*b));
             }
             buf.copy_within(whole..len, 0);
             carry = len - whole;
         }
-        Ok::<_, std::io::Error>(binner.finish())
+        Ok::<_, std::io::Error>(sink.finish())
     });
     let stderr = ffmpeg::collect_stderr(child.stderr.take().expect("stderr is piped"), None);
 
     let status = ffmpeg::wait_or_kill(&mut child, cancel).await;
-    let write_result = writer.await.map_err(|e| AppError::Io(format!("writer task: {e}")))?;
+    let write_result = writer
+        .await
+        .map_err(|e| AppError::Io(format!("writer task: {e}")))?;
     let status = status?;
-    let bins = reader
+    let out = reader
         .await
         .map_err(|e| AppError::Io(format!("reader task: {e}")))?
         .map_err(|e| AppError::Ffmpeg(format!("reading ffmpeg output: {e}")))?;
     ffmpeg::check_exit(status, stderr, "audio decode").await?;
     write_result?;
-    Ok(bins)
+    Ok(out)
+}
+
+/// Bytes `decode_run` will feed for all runs, for progress.
+fn input_bytes(dir: &Path, runs: &[Run]) -> AppResult<u64> {
+    let init = dir.join(AUDIO_INIT);
+    let init_len = std::fs::metadata(&init)
+        .map_err(|e| AppError::io(init.display(), e))?
+        .len();
+    Ok(runs
+        .iter()
+        .flat_map(|r| r.first..=r.last)
+        .map(|n| std::fs::metadata(dir.join(audio_chunk(n))).map_or(0, |m| m.len()))
+        .sum::<u64>()
+        + init_len * runs.len() as u64)
+}
+
+/// Video-time start of each run.
+///
+/// Video time 0 is the start of the first video chunk. The audio track starts a bit later
+/// (0.358 s in the sample session); raw f32 output drops that, so each run is placed by its own
+/// probed start time. Falls back to the nominal chunk time when probing fails.
+async fn run_starts(
+    paths: &FfmpegPaths,
+    dir: &Path,
+    inv: &ChunkInventory,
+    runs: &[Run],
+    segment_s: f64,
+    cancel: &CancellationToken,
+) -> AppResult<Vec<f64>> {
+    let video_start =
+        match probe_start(paths, dir, VIDEO_INIT, &video_chunk(inv.first), cancel).await {
+            Err(AppError::Cancelled) => return Err(AppError::Cancelled),
+            Err(e) => {
+                log::warn!("probing video start: {e}; assuming audio and video start together");
+                None
+            }
+            Ok(t) => Some(t),
+        };
+    let mut out = Vec::with_capacity(runs.len());
+    for run in runs {
+        let nominal = f64::from(run.first - inv.first) * segment_s;
+        out.push(match video_start {
+            Some(v0) => {
+                match probe_start(paths, dir, AUDIO_INIT, &audio_chunk(run.first), cancel).await {
+                    Ok(a) => a - v0,
+                    Err(AppError::Cancelled) => return Err(AppError::Cancelled),
+                    Err(e) => {
+                        log::warn!("probing audio start of chunk {}: {e}", run.first);
+                        nominal
+                    }
+                }
+            }
+            None => nominal,
+        });
+    }
+    Ok(out)
+}
+
+/// Decodes every run at `rate` and copies the output into a buffer of `total` items that starts
+/// at video time 0. `per_s` items make one second. Missing chunks stay `T::default()`.
+#[allow(clippy::too_many_arguments)]
+async fn decode_placed<S: Sink<Out = Vec<T>>, T: Copy + Default>(
+    paths: &FfmpegPaths,
+    dir: &Path,
+    inv: &ChunkInventory,
+    segment_s: f64,
+    rate: u32,
+    (total, per_s): (usize, f64),
+    on_progress: ProgressFn,
+    cancel: &CancellationToken,
+) -> AppResult<(Vec<T>, Vec<Run>)> {
+    let runs = plan_runs(dir, inv);
+    if runs.is_empty() {
+        return Err(AppError::NotFound(format!(
+            "no audio chunks in {}",
+            dir.display()
+        )));
+    }
+    let total_bytes = input_bytes(dir, &runs)?;
+    let starts = run_starts(paths, dir, inv, &runs, segment_s, cancel).await?;
+    let written = Arc::new(AtomicU64::new(0));
+    let mut out = vec![T::default(); total];
+    for (run, start_s) in runs.iter().zip(starts) {
+        let items = decode_run::<S>(
+            paths,
+            dir,
+            run,
+            rate,
+            written.clone(),
+            on_progress.clone(),
+            total_bytes,
+            cancel,
+        )
+        .await?;
+        let offset = (start_s * per_s).round() as i64;
+        log::info!(
+            "audio run {}–{}: {} items at {offset}",
+            run.first,
+            run.last,
+            items.len()
+        );
+        for (i, b) in items.into_iter().enumerate() {
+            let at = offset + i as i64;
+            if (0..total as i64).contains(&at) {
+                out[at as usize] = b;
+            }
+        }
+    }
+    on_progress(1.0);
+    Ok((out, runs))
 }
 
 /// Decodes all audio of the inventory into level-0 bins that start at video time 0.
@@ -211,59 +359,29 @@ pub async fn extract(
     on_progress: ProgressFn,
     cancel: &CancellationToken,
 ) -> AppResult<(Vec<Bin>, Vec<Gap>)> {
-    let runs = plan_runs(dir, inv);
-    if runs.is_empty() {
-        return Err(AppError::NotFound(format!("no audio chunks in {}", dir.display())));
-    }
     let total = total_bins(inv, segment_s);
-    let init_len = std::fs::metadata(dir.join(AUDIO_INIT)).map_err(|e| AppError::io(dir.join(AUDIO_INIT).display(), e))?.len();
-    let total_bytes: u64 = runs
-        .iter()
-        .flat_map(|r| r.first..=r.last)
-        .map(|n| std::fs::metadata(dir.join(audio_chunk(n))).map_or(0, |m| m.len()))
-        .sum::<u64>()
-        + init_len * runs.len() as u64;
+    let (bins, runs) =
+        decode_placed::<Binner, Bin>(paths, dir, inv, segment_s, SAMPLE_RATE, (total, BINS_PER_S), on_progress, cancel)
+            .await?;
+    Ok((bins, gaps(&runs, inv, segment_s)))
+}
 
-    // Video time 0 is the start of the first video chunk. The audio track starts a bit later
-    // (0.358 s in the sample session); raw f32 output drops that, so place each run by its
-    // own start time.
-    let video_start = probe_start(paths, dir, VIDEO_INIT, &video_chunk(inv.first), cancel).await;
-    let video_start = match video_start {
-        Err(AppError::Cancelled) => return Err(AppError::Cancelled),
-        Err(e) => {
-            log::warn!("probing video start: {e}; assuming audio and video start together");
-            None
-        }
-        Ok(t) => Some(t),
-    };
-
-    let written = Arc::new(AtomicU64::new(0));
-    let mut out = vec![[0.0f32; 3]; total];
-    for run in &runs {
-        let nominal = f64::from(run.first - inv.first) * segment_s;
-        let start_s = match video_start {
-            Some(v0) => match probe_start(paths, dir, AUDIO_INIT, &audio_chunk(run.first), cancel).await {
-                Ok(a) => a - v0,
-                Err(AppError::Cancelled) => return Err(AppError::Cancelled),
-                Err(e) => {
-                    log::warn!("probing audio start of chunk {}: {e}", run.first);
-                    nominal
-                }
-            },
-            None => nominal,
-        };
-        let bins = decode_run(paths, dir, run, written.clone(), on_progress.clone(), total_bytes, cancel).await?;
-        let offset = (start_s * BINS_PER_S).round() as i64;
-        log::info!("audio run {}–{}: {} bins at bin {offset}", run.first, run.last, bins.len());
-        for (i, b) in bins.into_iter().enumerate() {
-            let at = offset + i as i64;
-            if (0..total as i64).contains(&at) {
-                out[at as usize] = b;
-            }
-        }
-    }
-    on_progress(1.0);
-    Ok((out, gaps(&runs, inv, segment_s)))
+/// All audio of the inventory as mono samples at `rate`, starting at video time 0, placed
+/// exactly like [`extract`]. For the M14 experiment dump (models want 16 or 32 kHz).
+#[cfg(test)]
+pub async fn extract_samples(
+    paths: &FfmpegPaths,
+    dir: &Path,
+    inv: &ChunkInventory,
+    segment_s: f64,
+    rate: u32,
+    cancel: &CancellationToken,
+) -> AppResult<Vec<f32>> {
+    let per_s = f64::from(rate);
+    let total = if inv.count == 0 { 0 } else { (f64::from(inv.last - inv.first + 1) * segment_s * per_s).round() as usize };
+    let (samples, _) =
+        decode_placed::<RawSamples, f32>(paths, dir, inv, segment_s, rate, (total, per_s), Arc::new(|_| {}), cancel).await?;
+    Ok(samples)
 }
 
 #[cfg(test)]

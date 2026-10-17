@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef } from "react";
 import { AudioWaveform, Brackets, Flag, Play, TriangleAlert } from "lucide-react";
-import type { Marker, SessionDetail, Spike } from "../../bindings";
+import type { Label, Marker, Rating, SessionDetail, Spike } from "../../bindings";
 import { formatTimecode } from "../../lib/format";
 import { useShortcut } from "../../lib/shortcuts";
+import { toast } from "../../state/toasts";
 import { useUi, type MomentsFilter, type MomentsSort } from "../../state/ui";
 import { reveal, useView, zoomToRange } from "../../state/view";
 import { IconButton } from "../ui/Button";
@@ -10,6 +11,68 @@ import { Segmented } from "../ui/Segmented";
 import { EmptyState } from "../ui/misc";
 import type { Analysis } from "../editor/useAnalysis";
 import { Detection } from "./Detection";
+
+/** Half the length of a "missed moment" region around the playhead. */
+const MISSED_HALF_S = 3;
+const RATING_TEXT: Record<Rating, string> = { good: "Good", meh: "Meh", bad: "Bad", missed: "Missed" };
+
+/** M14 labelling: 1/2/3 rate the selected candidate, then the next unrated one plays; X marks a missed moment. */
+function useLabellingKeys(analysis: Analysis) {
+  const lab = analysis.labelling;
+  const pool = lab?.pool ?? null;
+  const rated = useMemo(() => new Set(lab?.labels.map((l) => l.candidateId)), [lab?.labels]);
+  const on = pool !== null && pool.length > 0;
+
+  const rate = (rating: Rating) => {
+    if (!lab || !pool) return false;
+    const { selectedSpike, playheadS } = useView.getState();
+    const i = selectedSpike ?? pool.findIndex((c) => c.startS <= playheadS && playheadS <= c.endS);
+    const c = pool[i];
+    if (!c) return false;
+    void lab.saveLabel({ candidateId: c.id, startS: c.startS, endS: c.endS, rating });
+    const next = pool.findIndex((d, j) => j > i && !rated.has(d.id));
+    if (next >= 0) {
+      goTo(analysis.spikes, next);
+      useView.getState().requestPlay();
+    }
+  };
+  useShortcut("rateGood", () => rate("good"), on);
+  useShortcut("rateMeh", () => rate("meh"), on);
+  useShortcut("rateBad", () => rate("bad"), on);
+  useShortcut(
+    "markMissed",
+    () => {
+      if (!lab) return false;
+      const t = useView.getState().playheadS;
+      const label: Label = { candidateId: null, startS: Math.max(0, t - MISSED_HALF_S), endS: t + MISSED_HALF_S, rating: "missed" };
+      void lab.saveLabel(label).then(() =>
+        toast.success(`Missed moment marked at ${formatTimecode(t)}`, [{ label: "Undo", run: () => void lab.saveLabel(label, true) }]),
+      );
+    },
+    lab !== null,
+  );
+}
+
+function LabellingHeader({ labels, poolSize }: { labels: Label[]; poolSize: number | null }) {
+  if (poolSize === null) {
+    return (
+      <p className="labelling-header muted">
+        Labelling mode: no candidate pool for this recording. Run <span className="mono">experiments/moments/pool.py</span>.
+      </p>
+    );
+  }
+  const rated = labels.filter((l) => l.candidateId !== null).length;
+  const missed = labels.length - rated;
+  return (
+    <p className="labelling-header">
+      <strong>Labelling</strong>{" "}
+      <span className="num">
+        {rated} / {poolSize}
+      </span>{" "}
+      rated{missed > 0 && `, ${missed} missed`}. <span className="faint">1 good · 2 meh · 3 bad · X missed</span>
+    </p>
+  );
+}
 
 /** Selects a spike: playhead to its start, zoomed to the region. */
 function goTo(spikes: Spike[], i: number) {
@@ -119,17 +182,27 @@ export function MomentsTab({ detail, analysis }: { detail: SessionDetail; analys
   }, [selected]);
 
   const ready = analysis.status.kind === "ready";
+  useLabellingKeys(analysis);
+  const lab = analysis.labelling;
+  const ratingOf = useMemo(() => {
+    const byId = new Map(lab?.labels.map((l) => [l.candidateId, l.rating]));
+    return (rank: number) => (lab?.pool ? byId.get(lab.pool[rank]?.id) : undefined);
+  }, [lab]);
 
   return (
     <div className="moments-tab">
-      <Detection
-        params={params}
-        onChange={analysis.changeParams}
-        onReset={analysis.resetParams}
-        count={spikes.length}
-        busy={busy}
-        gameName={detail.summary.gameName}
-      />
+      {lab ? (
+        <LabellingHeader labels={lab.labels} poolSize={lab.pool?.length ?? null} />
+      ) : (
+        <Detection
+          params={params}
+          onChange={analysis.changeParams}
+          onReset={analysis.resetParams}
+          count={spikes.length}
+          busy={busy}
+          gameName={detail.summary.gameName}
+        />
+      )}
       <div className="moments-controls">
         <Segmented label="Show" size="sm" value={filter} options={FILTERS} onChange={(f) => useUi.getState().set({ momentsFilter: f })} />
         <span className="spacer" />
@@ -160,9 +233,13 @@ export function MomentsTab({ detail, analysis }: { detail: SessionDetail; analys
                 <span className="moment-rank num">#{it.rank + 1}</span>
                 <span className="moment-time mono">{formatTimecode(it.spike.startS)}</span>
                 <span className="moment-len num faint">{(it.spike.endS - it.spike.startS).toFixed(1)} s</span>
-                <span className="score" title={`Score ${it.spike.score.toFixed(1)}`}>
-                  <span style={{ width: `${(it.spike.score / maxScore) * 100}%` }} />
-                </span>
+                {lab?.pool ? (
+                  <RatingChip rating={ratingOf(it.rank)} />
+                ) : (
+                  <span className="score" title={`Score ${it.spike.score.toFixed(1)}`}>
+                    <span style={{ width: `${(it.spike.score / maxScore) * 100}%` }} />
+                  </span>
+                )}
                 <span className="moment-actions">
                   <IconButton
                     label="Select for export"
@@ -228,4 +305,8 @@ export function MomentsTab({ detail, analysis }: { detail: SessionDetail; analys
       )}
     </div>
   );
+}
+
+function RatingChip({ rating }: { rating: Rating | undefined }) {
+  return <span className={`rating-chip ${rating ?? "unrated"}`}>{rating ? RATING_TEXT[rating] : "–"}</span>;
 }
