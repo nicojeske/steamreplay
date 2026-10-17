@@ -41,9 +41,25 @@ fn exe(name: &str) -> String {
     format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
+/// Inside an AppImage, `LD_LIBRARY_PATH` points at the bundled libraries. A system ffmpeg that
+/// inherits it loads those instead of its own and fails (e.g. an older libmpg123 →
+/// "undefined symbol: mpg123_open_handle64"). Returns the variable without the AppImage's
+/// entries: `Some(None)` to remove it, `None` to leave it alone (not in an AppImage).
+fn host_library_path() -> Option<Option<String>> {
+    let appdir = std::env::var_os("APPDIR")?;
+    let appdir = appdir.to_str()?;
+    let current = std::env::var("LD_LIBRARY_PATH").ok()?;
+    let kept: Vec<&str> = current.split(':').filter(|e| !e.is_empty() && !e.starts_with(appdir)).collect();
+    Some(if kept.is_empty() { None } else { Some(kept.join(":")) })
+}
+
 fn std_command(program: &Path) -> std::process::Command {
-    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut c = std::process::Command::new(program);
+    match host_library_path() {
+        Some(Some(p)) => _ = c.env("LD_LIBRARY_PATH", p),
+        Some(None) => _ = c.env_remove("LD_LIBRARY_PATH"),
+        None => {}
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -97,10 +113,8 @@ pub fn locate(override_dir: Option<&Path>) -> AppResult<FfmpegPaths> {
 }
 
 fn command(program: &Path) -> Command {
-    let mut c = Command::new(program);
+    let mut c = Command::from(std_command(program));
     c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
-    #[cfg(windows)]
-    c.creation_flags(CREATE_NO_WINDOW);
     c
 }
 
