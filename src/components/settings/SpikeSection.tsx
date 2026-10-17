@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 import { commands, type SpikeParams } from "../../bindings";
 import { unwrap } from "../../lib/ipc";
-import { sensitivityToThreshold, thresholdToSensitivity } from "../../lib/spikeTuning";
+import {
+  LAUGH_THRESHOLD_BUILT_IN,
+  formatLaughThreshold,
+  laughSensitivityToThreshold,
+  laughThresholdToSensitivity,
+  sensitivityToThreshold,
+  thresholdToSensitivity,
+} from "../../lib/spikeTuning";
 import { toast } from "../../state/toasts";
 import { useUi } from "../../state/ui";
 import { PathActions } from "../PathActions";
@@ -31,6 +38,16 @@ export function SpikeSection() {
     }
   };
 
+  /** The built-in loudness values, keeping the laughter default. */
+  const resetLoudness = async (laughThreshold: number) => {
+    try {
+      await unwrap(commands.setSpikeDefaults(null));
+      await save({ ...(await unwrap(commands.getSpikeDefaults())), laughThreshold });
+    } catch (e) {
+      toast.error(e);
+    }
+  };
+
   const clearPresets = async () => {
     try {
       await unwrap(commands.clearSpikePresets());
@@ -42,9 +59,32 @@ export function SpikeSection() {
 
   if (!defaults) return <p className="muted">Loading…</p>;
   const sensitivity = Math.round(thresholdToSensitivity(defaults.thresholdDb));
+  const laughSensitivity = Math.round(laughThresholdToSensitivity(defaults.laughThreshold));
   return (
     <>
-      <Field label="Default sensitivity" description="For games you have not tuned in the Moments tab." stacked>
+      <Field label="Default laughter sensitivity" description="For games you have not tuned in the Moments tab." stacked>
+        <div className="slider-row main">
+          <Slider
+            label="Default laughter sensitivity"
+            value={laughSensitivity}
+            min={0}
+            max={100}
+            onChange={(v) => setDefaults({ ...defaults, laughThreshold: laughSensitivityToThreshold(v) })}
+            onCommit={(v) => void save({ ...defaults, laughThreshold: laughSensitivityToThreshold(v) })}
+          />
+          <span className="slider-value mono">
+            {laughSensitivity} <span className="faint">({formatLaughThreshold(defaults.laughThreshold)})</span>
+          </span>
+          <Button size="sm" variant="ghost" onClick={() => void save({ ...defaults, laughThreshold: LAUGH_THRESHOLD_BUILT_IN })}>
+            Built-in
+          </Button>
+        </div>
+      </Field>
+      <Field
+        label="Default loudness sensitivity"
+        description="Loud moments show while laughs are being found, or when laughter detection is unavailable."
+        stacked
+      >
         <div className="slider-row main">
           <Slider
             label="Default sensitivity"
@@ -57,7 +97,7 @@ export function SpikeSection() {
           <span className="slider-value mono">
             {sensitivity} <span className="faint">({defaults.thresholdDb.toFixed(1)} dB)</span>
           </span>
-          <Button size="sm" variant="ghost" onClick={() => void save(null)}>
+          <Button size="sm" variant="ghost" onClick={() => void resetLoudness(defaults.laughThreshold)}>
             Built-in
           </Button>
         </div>

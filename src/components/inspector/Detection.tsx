@@ -1,12 +1,23 @@
 import { Collapsible } from "radix-ui";
 import { ChevronDown, RotateCcw, SlidersHorizontal } from "lucide-react";
 import type { SpikeParams } from "../../bindings";
-import { ADVANCED, sensitivityToThreshold, thresholdToSensitivity } from "../../lib/spikeTuning";
+import {
+  ADVANCED,
+  LAUGH_ADVANCED,
+  formatLaughThreshold,
+  laughSensitivityToThreshold,
+  laughThresholdToSensitivity,
+  sensitivityToThreshold,
+  thresholdToSensitivity,
+} from "../../lib/spikeTuning";
+import type { Detector } from "../editor/useAnalysis";
 import { useUi } from "../../state/ui";
 import { Button } from "../ui/Button";
 import { Slider } from "../ui/Slider";
 
 type Props = {
+  /** Laughter tunes `laughThreshold` plus merge gap and padding; loudness tunes everything else. */
+  detector: Detector;
   params: SpikeParams | null;
   onChange: (p: SpikeParams) => void;
   onReset: () => void;
@@ -22,10 +33,16 @@ function formatValue(v: number, step: number, unit: string): string {
   return `${v.toFixed(decimals)} ${unit}`;
 }
 
-/** Sliders for the loud-moment detection. Changes apply live and are saved for this game. */
-export function Detection({ params, onChange, onReset, count, busy, gameName }: Props) {
+/** Sliders for the moment detection. Changes apply live and are saved for this game. */
+export function Detection({ detector, params, onChange, onReset, count, busy, gameName }: Props) {
   const open = useUi((s) => s.detectionOpen);
-  const sensitivity = params ? Math.round(thresholdToSensitivity(params.thresholdDb)) : null;
+  const laughs = detector === "laughter";
+  const sensitivity = params
+    ? Math.round(laughs ? laughThresholdToSensitivity(params.laughThreshold) : thresholdToSensitivity(params.thresholdDb))
+    : null;
+  const withSensitivity = (p: SpikeParams, v: number): SpikeParams =>
+    laughs ? { ...p, laughThreshold: laughSensitivityToThreshold(v) } : { ...p, thresholdDb: sensitivityToThreshold(v) };
+  const advanced = laughs ? LAUGH_ADVANCED : ADVANCED;
   return (
     <Collapsible.Root className="detection" open={open} onOpenChange={(o) => useUi.getState().set({ detectionOpen: o })}>
       <Collapsible.Trigger className="detection-trigger">
@@ -45,12 +62,13 @@ export function Detection({ params, onChange, onReset, count, busy, gameName }: 
                 value={sensitivity}
                 min={0}
                 max={100}
-                onChange={(v) => onChange({ ...params, thresholdDb: sensitivityToThreshold(v) })}
+                onChange={(v) => onChange(withSensitivity(params, v))}
               />
               <span className="slider-value mono">{sensitivity}</span>
             </div>
             <p className="detection-status muted">
-              {count} found{count >= params.maxResults && ` (top ${params.maxResults})`} · threshold {params.thresholdDb.toFixed(1)} dB
+              {count} {laughs ? "laughs" : "loud moments"} found{count >= params.maxResults && ` (top ${params.maxResults})`} · threshold{" "}
+              {laughs ? formatLaughThreshold(params.laughThreshold) : `${params.thresholdDb.toFixed(1)} dB`}
               {busy && " · recalculating…"}
             </p>
             <Collapsible.Root className="detection-advanced">
@@ -58,7 +76,7 @@ export function Detection({ params, onChange, onReset, count, busy, gameName }: 
                 Advanced <ChevronDown size={13} className="chevron" aria-hidden />
               </Collapsible.Trigger>
               <Collapsible.Content className="advanced-grid">
-                {ADVANCED.map((a) => (
+                {advanced.map((a) => (
                   <div key={a.key} className="slider-row">
                     <span className="slider-label">{a.label}</span>
                     <Slider

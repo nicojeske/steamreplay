@@ -17,6 +17,18 @@ import { toast } from "../../state/toasts";
 import { useUi } from "../../state/ui";
 import { useView } from "../../state/view";
 
+/** The laughter model's job (M15). Loudness is shown until it is `ready`. */
+export type LaughStatus =
+  | { kind: "idle" }
+  | { kind: "running"; fraction: number | null }
+  | { kind: "ready" }
+  /** The model is missing or broken: loudness only. */
+  | { kind: "unavailable"; message: string }
+  | { kind: "failed"; message: string };
+
+/** Which ranking the list, the timeline and the lane show. */
+export type Detector = "laughter" | "loudness";
+
 export type AnalysisStatus =
   | { kind: "running"; fraction: number | null }
   | { kind: "ready"; meta: WaveformMeta }
@@ -30,7 +42,8 @@ const SAVE_DELAY_MS = 1000;
 
 export type Analysis = ReturnType<typeof useAnalysis>;
 
-/** Runs the audio analysis of a session and keeps its loud moments in sync with the tuning. */
+/** Runs the audio analysis of a session, then the laughter model, and keeps the moments in sync with
+ * the tuning. Laughs replace the loud moments once the model is done (M15). */
 export function useAnalysis(detail: SessionDetail) {
   const id = detail.summary.id;
   const appId = detail.summary.appId;
@@ -44,8 +57,15 @@ export function useAnalysis(detail: SessionDetail) {
   const cacheSeq = useView((s) => s.cacheSeq);
   const jobRef = useRef<string | null>(null);
   const paramsRef = useRef(params);
+  // Keyed by session, so the previous session's laughter never shows.
+  const [laughState, setLaughState] = useState<{ id: string; status: LaughStatus }>({ id, status: { kind: "idle" } });
+  const [laughAttempt, setLaughAttempt] = useState(0);
+  const laugh: LaughStatus = laughState.id === id ? laughState.status : { kind: "idle" };
+  const detector: Detector = laugh.kind === "ready" ? "laughter" : "loudness";
+  const detectorRef = useRef(detector);
   useEffect(() => {
     paramsRef.current = params;
+    detectorRef.current = detector;
   });
 
   useEffect(() => {
@@ -80,6 +100,40 @@ export function useAnalysis(detail: SessionDetail) {
     };
   }, [id, appId, first, last, attempt, cacheSeq, hasMedia]);
 
+  // --- laughter (M15) -----------------------------------------------------------------------
+
+  // A new object after every audio analysis, which also resets the list to the loud moments.
+  const audioMeta = status.kind === "ready" ? status.meta : null;
+  useEffect(() => {
+    if (!audioMeta) return;
+    const jobId = crypto.randomUUID();
+    let active = true;
+    const set = (s: LaughStatus) => active && setLaughState({ id, status: s });
+    set({ kind: "running", fraction: null });
+    const progress = new Channel<Progress>();
+    progress.onmessage = (p) => set({ kind: "running", fraction: p.fraction });
+    unwrap(commands.analyzeLaughter(id, jobId, progress))
+      .then(async () => {
+        const p = paramsRef.current ?? (await unwrap(commands.getSpikeParams(appId)));
+        const found = await unwrap(commands.getLaughs(id, p));
+        if (!active) return;
+        // The ranks changed; the old index would point at another moment.
+        useView.getState().selectSpike(null);
+        setSpikes(found);
+        set({ kind: "ready" });
+      })
+      .catch((e: unknown) => {
+        if (!active) return;
+        if (e instanceof IpcError && e.kind === "cancelled") set({ kind: "idle" });
+        else if (e instanceof IpcError && e.kind === "model") set({ kind: "unavailable", message: e.message });
+        else set({ kind: "failed", message: errorMessage(e) });
+      });
+    return () => {
+      active = false;
+      void commands.cancelJob(jobId);
+    };
+  }, [id, appId, audioMeta, laughAttempt]);
+
   // --- live re-detection ---------------------------------------------------------------------
 
   const reqSeq = useRef(0);
@@ -94,7 +148,8 @@ export function useAnalysis(detail: SessionDetail) {
         lastFetch.current = performance.now();
         const n = ++reqSeq.current;
         setBusy(true);
-        unwrap(commands.getSpikes(id, p))
+        const request = detectorRef.current === "laughter" ? commands.getLaughs(id, p) : commands.getSpikes(id, p);
+        unwrap(request)
           .then((found) => {
             if (n !== reqSeq.current) return; // a newer request is on its way
             setSpikes(found);
@@ -107,7 +162,7 @@ export function useAnalysis(detail: SessionDetail) {
               // Two frames: the timeline redraws in the frame after React commits.
               requestAnimationFrame(() =>
                 requestAnimationFrame(() =>
-                  console.debug(`spike tuning: ${found.length} spikes, input → redraw ${(performance.now() - t0).toFixed(0)} ms`),
+                  console.debug(`spike tuning: ${found.length} ${detectorRef.current} moments, input → redraw ${(performance.now() - t0).toFixed(0)} ms`),
                 ),
               );
             }
@@ -227,6 +282,10 @@ export function useAnalysis(detail: SessionDetail) {
 
   return {
     status,
+    laugh,
+    /** Laughter once the model is done, loudness until then or without the model. */
+    detector,
+    retryLaugh: () => setLaughAttempt((a) => a + 1),
     tiles,
     params,
     spikes: usingPool ? poolSpikes : spikes,

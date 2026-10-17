@@ -39,7 +39,7 @@ export function SettingsDialog({ open, info, onClose, onChanged, onShowShortcuts
     { id: "general", label: "General", icon: <Palette size={16} />, body: <GeneralSection info={info} onChanged={onChanged} /> },
     { id: "export", label: "Export", icon: <Download size={16} />, body: <ExportSection /> },
     { id: "fireshare", label: "Fireshare", icon: <Share2 size={16} />, body: <FireshareSection /> },
-    { id: "moments", label: "Loud moments", icon: <AudioWaveform size={16} />, body: <SpikeSection /> },
+    { id: "moments", label: "Moments", icon: <AudioWaveform size={16} />, body: <SpikeSection /> },
     { id: "preview", label: "Video preview", icon: <Film size={16} />, body: <PreviewSection /> },
     { id: "ffmpeg", label: "ffmpeg", icon: <Terminal size={16} />, body: <FfmpegSection /> },
     { id: "storage", label: "Storage", icon: <HardDrive size={16} />, body: <StorageSection /> },

@@ -6,6 +6,7 @@ import { useUi } from "../../state/ui";
 import { useView, zoomBy, zoomFit, zoomToRange } from "../../state/view";
 import { Button, IconButton } from "../ui/Button";
 import { ProgressBar } from "../ui/misc";
+import { LaughLane } from "./LaughLane";
 import { LoudnessLane } from "./LoudnessLane";
 import { Timeline } from "./Timeline";
 import type { Analysis } from "./useAnalysis";
@@ -20,7 +21,7 @@ function zoomSelection() {
 
 /** The timeline with its toolbar; the analysis progress while the waveform is not ready. */
 export function TimelinePanel({ detail, analysis }: { detail: SessionDetail; analysis: Analysis }) {
-  const { status, tiles, params, spikes } = analysis;
+  const { status, tiles, params, spikes, detector } = analysis;
   const follow = useView((s) => s.follow);
   const exportMode = useView((s) => s.exportMode);
   const hasSelection = useView((s) => s.inS !== null);
@@ -59,7 +60,11 @@ export function TimelinePanel({ detail, analysis }: { detail: SessionDetail; ana
           onClick={() => useView.getState().setFollow(!follow)}
         />
         <IconButton
-          label="Loudness lane: loudness above the baseline, with the threshold line"
+          label={
+            detector === "laughter"
+              ? "Laughter lane: laughter probability, with the threshold line"
+              : "Loudness lane: loudness above the baseline, with the threshold line"
+          }
           size="sm"
           icon={<AudioLines size={16} />}
           active={lane}
@@ -71,13 +76,18 @@ export function TimelinePanel({ detail, analysis }: { detail: SessionDetail; ana
         {exportMode === "fast" && hasSelection && (
           <span className="toolbar-text faint">Fast export cuts on the {segS} s chunks (dashed lines)</span>
         )}
-        <span className="toolbar-text faint hide-narrow">Drag to pan · wheel to zoom · Shift+drag to select · double-click a loud moment to zoom</span>
+        <span className="toolbar-text faint hide-narrow">Drag to pan · wheel to zoom · Shift+drag to select · double-click a moment to zoom</span>
       </div>
 
       {ready ? (
         <div className="timeline-body">
           <Timeline id={detail.summary.id} tiles={tiles} spikes={spikes} markers={detail.markers} gaps={status.meta.gaps} segS={segS} />
-          {lane && <LoudnessLane tiles={tiles} thresholdDb={params.thresholdDb} spikes={spikes} />}
+          {lane &&
+            (detector === "laughter" ? (
+              <LaughLane sessionId={detail.summary.id} threshold={params.laughThreshold} />
+            ) : (
+              <LoudnessLane tiles={tiles} thresholdDb={params.thresholdDb} spikes={spikes} />
+            ))}
         </div>
       ) : (
         <div className="timeline-status">

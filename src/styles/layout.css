@@ -437,6 +437,10 @@
 .advanced-grid { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
 .detection-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: var(--text-sm); }
 
+.laugh-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
+.laugh-banner > span { flex: 1; min-width: 0; }
+.laugh-banner .progress { flex-basis: 100%; }
+
 .labelling-header { margin: 0; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
 .rating-chip { width: 52px; text-align: center; border-radius: var(--radius-sm); font-size: var(--text-xs); padding: 1px 0; }
 .rating-chip.unrated { color: var(--faint); }

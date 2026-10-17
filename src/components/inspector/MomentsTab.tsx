@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef } from "react";
-import { AudioWaveform, Brackets, Flag, Play, TriangleAlert } from "lucide-react";
+import { AudioWaveform, Brackets, Flag, Laugh, Play, RotateCcw, TriangleAlert } from "lucide-react";
 import type { Label, Marker, Rating, SessionDetail, Spike } from "../../bindings";
 import { formatTimecode } from "../../lib/format";
 import { useShortcut } from "../../lib/shortcuts";
 import { toast } from "../../state/toasts";
 import { useUi, type MomentsFilter, type MomentsSort } from "../../state/ui";
 import { reveal, useView, zoomToRange } from "../../state/view";
-import { IconButton } from "../ui/Button";
+import { Button, IconButton } from "../ui/Button";
 import { Segmented } from "../ui/Segmented";
-import { EmptyState } from "../ui/misc";
+import { EmptyState, ProgressBar } from "../ui/misc";
 import type { Analysis } from "../editor/useAnalysis";
 import { Detection } from "./Detection";
 
@@ -120,19 +120,49 @@ type Item = { kind: "loud"; rank: number; spike: Spike } | { kind: "marker"; ind
 
 const time = (it: Item) => (it.kind === "loud" ? it.spike.startS : it.marker.videoTimeS);
 
-const FILTERS: { value: MomentsFilter; label: string }[] = [
+const filters = (laughs: boolean): { value: MomentsFilter; label: string }[] => [
   { value: "all", label: "All" },
-  { value: "loud", label: "Loud" },
+  { value: "loud", label: laughs ? "Laughs" : "Loud" },
   { value: "markers", label: "Markers" },
 ];
+
+/** Why the list shows loud moments instead of laughs, while that is the case. */
+function LaughBanner({ analysis }: { analysis: Analysis }) {
+  const { laugh } = analysis;
+  if (laugh.kind === "running") {
+    return (
+      <div className="laugh-banner">
+        <Laugh size={15} className="faint" aria-hidden />
+        <span>Finding laughs{laugh.fraction !== null && ` ${Math.round(laugh.fraction * 100)} %`}… showing loud moments until then.</span>
+        <ProgressBar value={laugh.fraction} label="Laughter analysis progress" />
+      </div>
+    );
+  }
+  if (laugh.kind === "unavailable" || laugh.kind === "failed") {
+    return (
+      <div className="laugh-banner">
+        <TriangleAlert size={15} className="warn" aria-hidden />
+        <span className="truncate" title={laugh.message}>
+          {laugh.kind === "unavailable" ? "Laughter detection unavailable" : "Laughter detection failed"}: showing loud moments.
+        </span>
+        <Button size="sm" variant="ghost" icon={<RotateCcw size={13} />} onClick={analysis.retryLaugh} title={laugh.message}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+  return null;
+}
 const SORTS: { value: MomentsSort; label: string }[] = [
   { value: "rank", label: "Rank" },
   { value: "time", label: "Time" },
 ];
 
-/** Loud moments and Steam markers in one list, with the detection tuning on top. */
+/** Laughs (or loud moments) and Steam markers in one list, with the detection tuning on top. */
 export function MomentsTab({ detail, analysis }: { detail: SessionDetail; analysis: Analysis }) {
-  const { spikes, params, busy } = analysis;
+  const { spikes, params, busy, detector } = analysis;
+  const laughs = detector === "laughter";
+  const MomentIcon = laughs ? Laugh : AudioWaveform;
   const selected = useView((s) => s.selectedSpike);
   const filter = useUi((s) => s.momentsFilter);
   const sort = useUi((s) => s.momentsSort);
@@ -195,6 +225,7 @@ export function MomentsTab({ detail, analysis }: { detail: SessionDetail; analys
         <LabellingHeader labels={lab.labels} poolSize={lab.pool?.length ?? null} />
       ) : (
         <Detection
+          detector={detector}
           params={params}
           onChange={analysis.changeParams}
           onReset={analysis.resetParams}
@@ -203,20 +234,21 @@ export function MomentsTab({ detail, analysis }: { detail: SessionDetail; analys
           gameName={detail.summary.gameName}
         />
       )}
+      {!lab && <LaughBanner analysis={analysis} />}
       <div className="moments-controls">
-        <Segmented label="Show" size="sm" value={filter} options={FILTERS} onChange={(f) => useUi.getState().set({ momentsFilter: f })} />
+        <Segmented label="Show" size="sm" value={filter} options={filters(laughs)} onChange={(f) => useUi.getState().set({ momentsFilter: f })} />
         <span className="spacer" />
         <Segmented label="Sort" size="sm" value={sort} options={SORTS} onChange={(s) => useUi.getState().set({ momentsSort: s })} />
       </div>
 
       {items.length === 0 ? (
-        <EmptyState icon={<AudioWaveform size={22} />} title={ready || filter === "markers" ? "Nothing here" : "Analysing audio…"} className="compact">
+        <EmptyState icon={<MomentIcon size={22} />} title={ready || filter === "markers" ? "Nothing here" : "Analysing audio…"} className="compact">
           <p className="muted">
             {filter === "markers"
               ? "No Steam markers in this recording."
               : ready
-                ? "No loud moments found. Try a higher sensitivity."
-                : "Loud moments appear when the analysis is done."}
+                ? `No ${laughs ? "laughs" : "loud moments"} found. Try a higher sensitivity.`
+                : "Moments appear when the analysis is done."}
           </p>
         </EmptyState>
       ) : (
@@ -229,14 +261,17 @@ export function MomentsTab({ detail, analysis }: { detail: SessionDetail; analys
                 className={`moment loud ${it.rank === selected ? "selected" : ""}`}
                 {...activate(() => goTo(spikes, it.rank))}
               >
-                <AudioWaveform size={15} className="moment-icon" aria-hidden />
+                <MomentIcon size={15} className="moment-icon" aria-hidden />
                 <span className="moment-rank num">#{it.rank + 1}</span>
                 <span className="moment-time mono">{formatTimecode(it.spike.startS)}</span>
                 <span className="moment-len num faint">{(it.spike.endS - it.spike.startS).toFixed(1)} s</span>
                 {lab?.pool ? (
                   <RatingChip rating={ratingOf(it.rank)} />
                 ) : (
-                  <span className="score" title={`Score ${it.spike.score.toFixed(1)}`}>
+                  <span
+                    className="score"
+                    title={laughs ? `Laughter ${Math.round(it.spike.score * 100)} %` : `Score ${it.spike.score.toFixed(1)}`}
+                  >
                     <span style={{ width: `${(it.spike.score / maxScore) * 100}%` }} />
                   </span>
                 )}
