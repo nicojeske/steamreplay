@@ -1,6 +1,6 @@
 # SteamReplay: overview
 
-> Read this first. Each milestone spec (`01`–`08`) assumes you know this file.
+> Read this first. Each milestone spec (`01`–`08`, no `07`) assumes you know this file.
 
 ## Context and goals
 The team records gameplay with **Steam Game Recording** in background mode. Today the only way to find good moments is manual markers. Most good moments are loud: people laughing, shouting or cheering.
@@ -182,7 +182,6 @@ steamreplay/
 | `media/spikes.rs` | Find loud parts | M2 (tuning UI in M6) |
 | `media/export.rs` | Fast export (stream copy, snapped to 3 s) in M3; precise export (re-encode) in M5 | M3, M5 |
 | `media/encoders.rs` | Cached encoder/hwaccel capabilities, encoder choice and rate control for precise export | M5 |
-| `steam/watch.rs` | File watcher for the open session and the `video/` folders, incremental updates | M7 |
 | `media/chunks.rs` | Chunk file names, `read_files`, `probe_start` (used by audio, preview and export) | M4 (moved from `audio.rs`) |
 | `media/preview/` | 12 s H.264 preview segments, backend detection, LRU disk cache, `replay://` protocol | M4 |
 
@@ -205,7 +204,7 @@ steamreplay/
 | 4 | [04-preview-playback.md](04-preview-playback.md) | Video preview synced with the timeline |
 | 5 | [05-precise-export.md](05-precise-export.md) | Frame-accurate re-encode with H.264/HEVC/AV1, downscale, crop and size presets |
 | 6 | [06-spike-tuning-settings.md](06-spike-tuning-settings.md) | Live spike tuning with per-game presets, settings page, shortcut overlay, recent exports |
-| 7 | [07-live-sessions.md](07-live-sessions.md) | Sessions that are still recording grow on the timeline; buffer pruning is handled |
+| 7 | *(skipped)* | Live sessions were dropped. An open session does not grow; use Refresh. Export already leaves out the chunk being written. |
 | 8 | [08-distribution.md](08-distribution.md) | Icon, per-user installer, auto-update from GitHub Releases, AppImage, README |
 
-**Build order: 01 → 02 → 04 → 03 → 05 → 06 → 07 → 08.** M4 (preview) comes before M3 (export): choosing in and out points makes much more sense when you can see the video. The file numbers were kept, so the M3/M4 labels in the specs still refer to the files.
+**Build order: 01 → 02 → 04 → 03 → 05 → 06 → 08.** M4 (preview) comes before M3 (export): choosing in and out points makes much more sense when you can see the video. The file numbers were kept, so the M3/M4 labels in the specs still refer to the files.

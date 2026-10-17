@@ -131,7 +131,7 @@ clear_preview_cache()
 
 ## 5. Edge cases
 - **Pruned session:** segments are numbered from `first`, and the cache folder includes `first`, so old segments are never reused and their folder is removed on open. Checked: `bg_1623730_20261010_164846` (chunk 3418 starts at 10251.0 s, which maps to video time 0).
-- **Live session:** a partial last segment is cached under a name with its last chunk. Refreshing the info when the inventory changes is M7.
+- **Live session:** a partial last segment is cached under a name with its last chunk. Refreshing the info when the inventory changes is not planned (M7 was dropped).
 - **Gap chunks:** left out of the segment, so the timestamps have a gap. The player jumps gaps < 3 s, and a segment with no chunks at all gives 404 and is skipped.
 - **NVENC session limits / failures:** one job at a time per session, a software retry, and a switch to software after 2 failures in a row.
 - **Different source resolutions:** `-2:360` keeps the aspect ratio (5120×1440 → 1280×360, 16:9 → 640×360), and the player uses `object-fit: contain`.

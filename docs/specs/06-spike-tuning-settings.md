@@ -24,7 +24,7 @@
 - new detection algorithms (laughter classifiers, ML),
 - importing or exporting presets as files,
 - user-defined key bindings,
-- live sessions (M7).
+- live sessions (not planned).
 
 ## 4. Design
 

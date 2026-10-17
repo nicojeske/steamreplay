@@ -4,10 +4,10 @@
 A teammate downloads one installer from the GitHub Releases page, installs it without admin rights, and gets a SteamReplay entry with a real icon in the Start menu. After that, new versions arrive by themselves: the app says "Version x.y.z is available" and installs it with one click. The version is shown in the app. Linux gets an AppImage that also updates itself. A README explains installation, including the SmartScreen warning, because the build is not signed.
 
 ## 2. Prerequisites
-- M1–M7 done (this milestone is last on purpose).
+- M1–M6 done. M7 (live sessions) was skipped, so this milestone is the last one.
 - **The user makes the repo `nicojeske/steamreplay` public before this milestone.** The updater downloads `latest.json` and the installers from GitHub Releases without a token, which only works on a public repo. Before making it public:
   - run `gitleaks detect` (or `trufflehog git file://.`) over the whole history and fix anything it finds,
-  - check that no sample recordings or personal paths are in the fixtures beyond what `00-overview.md` already shows.
+  - **Redact personal data and rewrite history (decided):** the Steam account id `10000001` and `/home/user` appear in `00-overview.md`, `tests/fixtures/localconfig.vdf`, `steam/locate.rs` tests and `media/preview/protocol.rs` tests. Replace them in every commit with `git filter-repo --replace-text` (`10000001==>10000001`, `/home/user==>/home/user`), check with `git grep` over `git rev-list --all`, then force-push `main`. Redacting HEAD alone is not enough, because the history becomes public too.
 - The ffmpeg licence handling from M2 is already in place: `src-tauri/resources/ffmpeg/NOTICE.txt`, the generated `LICENSE.txt`, and `scripts/fetch-ffmpeg.ts` with a pinned GPL build. A public repo that ships GPL ffmpeg binaries is fine with this NOTICE (source link included).
 - `00-overview.md`: the CI and platform rules.
 
@@ -34,17 +34,21 @@ A teammate downloads one installer from the GitHub Releases page, installs it wi
 ## 4. Design
 
 ### 4.1 Current state
+- `src-tauri/src/lib.rs:65-75` registers the log, store, dialog, opener and clipboard-manager plugins. `capabilities/default.json` allows `core:default`, opener (plus reveal), `store:default`, dialog open/save and clipboard write-text.
+- `src-tauri/src/main.rs` already sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` on Linux.
+- The favicon is the Vite default `/tauri.svg` (`index.html`).
 - `src-tauri/tauri.conf.json`:
   - `version: "0.1.0"`, `identifier: "de.steamreplay.app"`,
   - `bundle.targets: "all"` with the **default Tauri icons**,
   - no `windows`/`nsis`, `plugins` or updater settings.
 - `src-tauri/tauri.windows.conf.json` adds the ffmpeg/ffprobe sidecars and the licence resources.
 - `.github/workflows/build.yml`:
-  - builds `nsis` on `windows-latest` and `deb,appimage` on `ubuntu-22.04`, on every push and PR,
+  - builds `nsis` on `windows-latest` and `deb,appimage` on `ubuntu-22.04`, on every push to `main` and every PR,
+  - also runs clippy, tests, the `bindings.ts` diff check, lint and tsc (the release workflow only builds),
   - uploads them as workflow artifacts,
   - publishes no releases.
 - The version `0.1.0` is set separately in `tauri.conf.json`, `src-tauri/Cargo.toml` and `package.json`.
-- The UI shows no app version anywhere. The only version shown is ffmpeg's, in `SettingsDialog.tsx:96`.
+- The UI shows no app version anywhere. The only version shown is ffmpeg's, in `SettingsDialog.tsx:119`.
 
 ### 4.2 Icon
 - Add a source `src-tauri/app-icon.svg`, a simple flat waveform with a play triangle that stays readable at 16 px.
@@ -86,10 +90,11 @@ A teammate downloads one installer from the GitHub Releases page, installs it wi
 - **UI** (`src/lib/updater.ts` + `Toasts.tsx`):
   - 5 s after startup, call `check()` once in the background. Errors (offline, rate limit) are only logged, never shown.
   - If an update exists: a persistent toast "SteamReplay x.y.z is available — Install and restart / Later". Install calls `downloadAndInstall` with a progress bar in the toast, then `relaunch()`.
-  - If an export is running, Install waits until the job queue is empty.
+  - If an export is queued or running, Install waits until the queue is empty and shows "Waiting for exports…". The queue is local state in `ExportPanel.tsx` (`jobs`). `ExportPanel` mirrors "any job queued or running" into a small zustand store `src/state/exportBusy.ts`, which the updater waits on. (`MediaState.running_jobs()` does not fit: it also counts audio jobs and does not know about queued exports.)
+  - `Toasts.tsx` only has click-to-dismiss text toasts. Extend `Toast` with optional `persistent`, `actions: {label, onClick}[]` and `progress`. Error toasts stay as they are.
   - The settings dialog shows "Version 0.x.y" (`getVersion()` from `@tauri-apps/api/app`) and a "Check for updates" button, which shows "up to date" or the same prompt.
   - "Later" hides the toast until the next app start.
-- The `.deb` cannot update itself. The updater only covers NSIS and AppImage; `check()` is skipped on Linux when `APPIMAGE` is not set.
+- The `.deb` cannot update itself. The updater only covers NSIS and AppImage; `check()` is skipped on Linux when `APPIMAGE` is not set. The frontend asks a command `updater_supported()` for this.
 
 ### 4.5 Release workflow (`.github/workflows/release.yml`, new)
 - Trigger: `push: tags: ['v*']`. Permissions: `contents: write`.
@@ -100,7 +105,7 @@ A teammate downloads one installer from the GitHub Releases page, installs it wi
   3. `tauri-apps/tauri-action@v0` with `tagName: ${{ github.ref_name }}`, `releaseName: SteamReplay ${{ github.ref_name }}`, `releaseDraft: true`, `includeUpdaterJson: true`, and `args: --bundles <matrix>`. The env gets `GITHUB_TOKEN` and the two `TAURI_SIGNING_*` secrets.
   4. A placeholder comment block "Windows code signing (Azure Trusted Signing / signtool) goes here", for later.
 - A draft release is only published by hand after a quick check. Once it is published, `releases/latest/download/latest.json` serves it to the updater.
-- `build.yml` stays as it is for pushes and PRs. Don't build twice on a tag push: `build.yml` already ignores tags, because it only triggers on `branches: [main]`.
+- `build.yml` keeps running for pushes and PRs. Don't build twice on a tag push: `build.yml` already ignores tags, because it only triggers on `branches: [main]`. It has no signing key, so its `tauri build` passes `--config '{"bundle":{"createUpdaterArtifacts":false}}'`.
 
 ### 4.6 Docs
 - **`README.md`** (new):
@@ -120,7 +125,7 @@ A teammate downloads one installer from the GitHub Releases page, installs it wi
   5. preview plays, and the detected backend is noted,
   6. fast export plays in VLC,
   7. precise Discord preset plays in Films & TV and Discord,
-  8. live session grows,
+  8. a session recorded while the app is open appears after Refresh, and exporting the end of a still-recording session works (the newest chunk is left out),
   9. settings: the version is shown,
   10. update from the previous release to the current one,
   11. uninstall leaves no files behind except the app data, if chosen.
@@ -158,7 +163,7 @@ A teammate downloads one installer from the GitHub Releases page, installs it wi
 - **Windows:** a teammate runs `docs/windows-test.md`.
 
 ## 8. Open questions / risks
-- **WebKitGTK in an AppImage on Arch/NVIDIA** often shows a blank window or crashes with DMA-BUF. If so, set `WEBKIT_DISABLE_DMABUF_RENDERER=1` in the app before the webview starts (Linux only, `lib.rs`), and document it. Also check that the bundled GStreamer plugins play the MSE preview. The AppImage is built on Ubuntu 22.04, which has an older GStreamer than CachyOS.
+- **WebKitGTK in an AppImage on Arch/NVIDIA** often shows a blank window or crashes with DMA-BUF. `main.rs` already sets `WEBKIT_DISABLE_DMABUF_RENDERER=1`. Still check that the bundled GStreamer plugins play the MSE preview. The AppImage is built on Ubuntu 22.04, which has an older GStreamer than CachyOS.
 - **SmartScreen reputation:** unsigned builds warn on every new version until they build up reputation. If the team gets annoyed, look at Azure Trusted Signing (about $10/month), using the CI hook from 4.5.
 - **`tauri-action` and the `../package.json` version path:** check that the action reads the resolved version. If not, keep the version in `tauri.conf.json` and let `pnpm bump` update it too.
-- **Public repo:** the specs contain the dev machine's account id and paths (`00-overview.md`, sample data). Decide whether to redact them before going public.
+- **Public repo:** decided. Redact and rewrite history, see §2.
