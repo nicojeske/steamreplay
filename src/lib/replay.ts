@@ -8,6 +8,11 @@ export function previewUrl(id: string, s: number): string {
   return `${BASE}preview/${encodeURIComponent(id)}/${s}.mp4`;
 }
 
+/** URL of a raw Steam DASH file: video or audio, init segment or chunk number (direct playback). */
+export function chunkUrl(id: string, kind: "v" | "a", chunk: number | "init"): string {
+  return `${BASE}chunk/${encodeURIComponent(id)}/${kind}/${chunk}.m4s`;
+}
+
 /** URL of the library thumbnail of a session (served by `media/thumbs.rs`). */
 export function thumbnailUrl(id: string): string {
   return `${BASE}thumb/${encodeURIComponent(id)}.jpg`;

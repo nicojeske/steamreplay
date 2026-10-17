@@ -98,7 +98,11 @@ export function InfoTab({ detail, preview }: { detail: SessionDetail; preview: P
           )}
           <Fact label="Chunks">{chunks.count === 0 ? "none" : `${chunks.first}–${chunks.last} (${chunks.count} files)`}</Fact>
           <Fact label="Preview">
-            {preview ? `${BACKEND_NAMES[preview.backend]}, ${preview.fps} fps` : <span className="faint">not open</span>}
+            {preview ? (
+              preview.backend ? `720p preview, ${BACKEND_NAMES[preview.backend]}` : "Original video"
+            ) : (
+              <span className="faint">not open</span>
+            )}
           </Fact>
         </dl>
       </section>

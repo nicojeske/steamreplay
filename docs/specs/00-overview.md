@@ -139,7 +139,7 @@ Use `ExportDirectory` as the default export folder. If a recording-path key is p
 - Typed from end to end. Rust↔TS IPC types are generated with **`tauri-specta`**, so there are no hand-written duplicate types.
 - Runs on Linux (WebKitGTK) and Windows (WebView2), with a small binary.
 - Rust handles the heavy work: audio analysis, file handling and running ffmpeg. TS/React handles the UI: canvas waveform and player.
-- **Why the preview needs transcoding:** WebKitGTK and WebView2 cannot reliably play 5K HEVC, especially through MSE on Linux/NVIDIA. The backend therefore makes low-res **H.264** preview chunks on demand (M4). Export always uses the **original** HEVC data.
+- **Preview video:** M4 assumed that WebKitGTK and WebView2 cannot reliably play 5K HEVC, so the backend made low-res **H.264** preview chunks on demand. M11 tested that: WebKitGTK plays Steam's original HEVC chunks through MSE (hardware-decoded with `nvh265dec`), so the player appends them directly. The transcoded preview (now 720p) is only the fallback for webviews without HEVC decoding. Export always uses the **original** HEVC data.
 - **ffmpeg:** Windows uses a bundled ffmpeg as a Tauri sidecar, set up in M2. Linux uses the system `ffmpeg` (any build with HEVC/AAC/libx264).
 - **Windows webview:** WebView2 is based on Chromium, so playing H.264 through MSE is reliable there. The webview risk from M4 mainly affects Linux. Teammates mostly have **NVIDIA** GPUs, so the CUDA/NVDEC + NVENC path is the main one on both OSes (the same ffmpeg flags work on Windows). AMD/Intel get a best-effort `d3d11va` + AMF/QSV path, and everything falls back to software. Video is not decoded in-process (no ffmpeg bindings), because external processes are simpler and avoid licensing issues.
 
@@ -183,7 +183,7 @@ steamreplay/
 | `media/export.rs` | Fast export (stream copy, snapped to 3 s) in M3; precise export (re-encode) in M5 | M3, M5 |
 | `media/encoders.rs` | Cached encoder/hwaccel capabilities, encoder choice and rate control for precise export | M5 |
 | `media/chunks.rs` | Chunk file names, `read_files`, `probe_start` (used by audio, preview and export) | M4 (moved from `audio.rs`) |
-| `media/preview/` | 12 s H.264 preview segments, backend detection, LRU disk cache, `replay://` protocol | M4 |
+| `media/preview/` | Raw chunk serving for the original video (M11); 12 s H.264 fallback segments, backend detection, LRU disk cache, `replay://` protocol | M4, M11 |
 
 ### Cross-cutting rules
 - **Errors:** one `AppError` enum (thiserror) that serialises to `{ kind, message }`. The frontend shows it in a toast. Commands never panic.
@@ -208,5 +208,6 @@ steamreplay/
 | 8 | [08-distribution.md](08-distribution.md) | Icon, per-user installer, auto-update from GitHub Releases, AppImage, README |
 | 9 | [09-ui-revamp.md](09-ui-revamp.md) | Editor workspace: library with thumbnails, big video, inspector tabs, global export queue, themes |
 | 10 | [10-fireshare-upload.md](10-fireshare-upload.md) | Upload clips to our Fireshare server with title, game and tags; copy the share link |
+| 11 | [11-direct-preview.md](11-direct-preview.md) | Play the original HEVC video in the preview; the 720p transcode is the fallback |
 
-**Build order: 01 → 02 → 04 → 03 → 05 → 06 → 08 → 09 → 10.** M4 (preview) comes before M3 (export): choosing in and out points makes much more sense when you can see the video. The file numbers were kept, so the M3/M4 labels in the specs still refer to the files.
+**Build order: 01 → 02 → 04 → 03 → 05 → 06 → 08 → 09 → 10 → 11.** M4 (preview) comes before M3 (export): choosing in and out points makes much more sense when you can see the video. The file numbers were kept, so the M3/M4 labels in the specs still refer to the files.

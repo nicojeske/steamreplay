@@ -27,9 +27,10 @@ impl PreviewCache {
     }
 
     /// Segment indexes are counted from the first chunk on disk, so the folder includes it:
-    /// after pruning, old files are not reused.
+    /// after pruning, old files are not reused. The suffix is the preview height: the 360p
+    /// segments from before M11 are not reused either.
     pub fn session_dir(&self, id: &str, first: u32) -> PathBuf {
-        self.root.join(format!("{}-{first}", cache_stem(id)))
+        self.root.join(format!("{}-{first}-720", cache_stem(id)))
     }
 
     pub fn set_limit_mb(&self, limit_mb: u32) {

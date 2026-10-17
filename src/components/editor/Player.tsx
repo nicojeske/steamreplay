@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { RotateCcw, VideoOff } from "lucide-react";
 import { commands, type PreviewInfo } from "../../bindings";
 import { errorMessage, unwrap } from "../../lib/ipc";
-import { MsePlayer, type PlayerStatus } from "../../lib/msePlayer";
+import { canPlayOriginal, MsePlayer, originalSource, transcodeSource, type PlayerStatus } from "../../lib/msePlayer";
 import { useShortcut } from "../../lib/shortcuts";
 import { followPlayhead, useView } from "../../state/view";
 import { Button } from "../ui/Button";
@@ -21,6 +21,9 @@ const RATES = [1, 2, 4];
 
 type Load = { kind: "opening" } | { kind: "ready"; info: PreviewInfo } | { kind: "failed"; message: string };
 
+/** Sessions whose original video failed to play; they use the transcoded preview until restart. */
+const fellBack = new Set<string>();
+
 /** The preview video, synced with the playhead, with the transport bar below it. */
 export function Player({ id, onInfo }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -37,17 +40,51 @@ export function Player({ id, onInfo }: Props) {
     onInfoRef.current = onInfo;
   });
 
-  // Open the preview and create the player.
+  // Open the preview and create the player: the original video when the webview can decode it,
+  // else (or after it failed to play) the transcoded preview.
   useEffect(() => {
     let active = true;
+    const start = (info: PreviewInfo, original: boolean) => {
+      const video = videoRef.current;
+      if (!active || !video) return;
+      const source = original && info.direct ? originalSource(id, info.direct) : transcodeSource(id, info);
+      const player = new MsePlayer(video, {
+        id,
+        source,
+        onStatus: (s) => {
+          if (!active) return;
+          if (s.kind === "error" && player.kind === "original" && info.mode === "auto") {
+            console.warn(`preview: original video failed (${s.message}); using the transcoded preview`);
+            void fallBack();
+            return;
+          }
+          setStatus(s);
+        },
+      });
+      playerRef.current = player;
+      player.seek(useView.getState().playheadS);
+      setLoad({ kind: "ready", info });
+      onInfoRef.current(info);
+    };
+    const fallBack = async () => {
+      fellBack.add(id);
+      playerRef.current?.destroy();
+      playerRef.current = null;
+      setStatus({ kind: "loading" });
+      try {
+        const info = await unwrap(commands.previewFallback(id, useView.getState().playheadS));
+        setStatus({ kind: "idle" });
+        start(info, false);
+      } catch (e) {
+        if (active) setLoad({ kind: "failed", message: errorMessage(e) });
+      }
+    };
     unwrap(commands.getPreviewInfo(id))
       .then((info) => {
-        if (!active || !videoRef.current) return;
-        const player = new MsePlayer(videoRef.current, { id, info, onStatus: (s) => active && setStatus(s) });
-        playerRef.current = player;
-        player.seek(useView.getState().playheadS);
-        setLoad({ kind: "ready", info });
-        onInfoRef.current(info);
+        const d = info.direct;
+        const original = d !== null && (info.mode === "original" || (!fellBack.has(id) && canPlayOriginal(d)));
+        if (original || info.backend !== null) start(info, original);
+        else void fallBack();
       })
       .catch((e: unknown) => active && setLoad({ kind: "failed", message: errorMessage(e) }));
     return () => {

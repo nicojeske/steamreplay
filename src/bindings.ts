@@ -40,18 +40,27 @@ export const commands = {
 	getFfmpegInfo: () => typedError<FfmpegPaths, AppError>(__TAURI_INVOKE("get_ffmpeg_info")),
 	/**  Sets (or clears) the folder that holds ffmpeg and ffprobe. */
 	setFfmpegDir: (path: string | null) => typedError<FfmpegPaths, AppError>(__TAURI_INVOKE("set_ffmpeg_dir", { path })),
-	/**  Opens the preview of a session and starts preparing the first segments. */
+	/**
+	 *  Opens the preview of a session. When the original video may be played (`PreviewInfo::direct`),
+	 *  nothing is transcoded until the player asks for it (`preview_fallback`); otherwise the first
+	 *  segments start right away.
+	 */
 	getPreviewInfo: (id: string) => typedError<PreviewInfo, AppError>(__TAURI_INVOKE("get_preview_info", { id })),
 	/**  Reorders the preview queue around the playhead (video time in seconds). */
 	previewPlayhead: (id: string, t: number | null) => typedError<null, AppError>(__TAURI_INVOKE("preview_playhead", { id, t })),
 	/**  Stops the session's preview jobs. */
 	previewClose: (id: string) => typedError<null, AppError>(__TAURI_INVOKE("preview_close", { id })),
+	/**
+	 *  The player cannot play the original video: turns on transcoding (detecting the backend if
+	 *  needed) and prepares the segments around `t`.
+	 */
+	previewFallback: (id: string, t: number | null) => typedError<PreviewInfo, AppError>(__TAURI_INVOKE("preview_fallback", { id, t })),
 	getPreviewSettings: () => typedError<PreviewSettings, AppError>(__TAURI_INVOKE("get_preview_settings")),
 	/**
 	 *  `backend: None` returns to automatic detection, which runs again the next time a preview
-	 *  opens.
+	 *  transcodes. A new `mode` applies the next time a preview opens.
 	 */
-	setPreviewSettings: (backend: 
+	setPreviewSettings: (mode: PreviewMode, backend: 
 /**  NVDEC + `scale_cuda` + NVENC (NVIDIA, Windows and Linux). */
 "cuda" | 
 /**  D3D11VA decode + AMF encode (AMD on Windows). Not tested on real hardware. */
@@ -63,7 +72,7 @@ export const commands = {
 /**  Quick Sync decode and encode. */
 "qsv" | 
 /**  libx264. Works everywhere, but needs many CPU cores. */
-"software" | null, cacheMb: number) => typedError<null, AppError>(__TAURI_INVOKE("set_preview_settings", { backend, cacheMb })),
+"software" | null, cacheMb: number) => typedError<null, AppError>(__TAURI_INVOKE("set_preview_settings", { mode, backend, cacheMb })),
 	clearPreviewCache: () => typedError<null, AppError>(__TAURI_INVOKE("clear_preview_cache")),
 	/**  Where the selection is cut, plus an estimated file size. */
 	exportSnap: (id: string, inS: number | null, outS: number | null) => typedError<Snap, AppError>(__TAURI_INVOKE("export_snap", { id, inS, outS })),
@@ -186,6 +195,23 @@ export type ChunkInventory = {
 export type ClearResult = {
 	/**  Files or job folders that could not be removed because they are in use. */
 	skipped: number,
+};
+
+/**  What the player needs to append Steam's original chunks (`replay://…/chunk/…`). */
+export type DirectInfo = {
+	/**  For `MediaSource.addSourceBuffer`, from `session.mpd`. */
+	videoMime: string,
+	/**  `None` when the session has no audio stream. */
+	audioMime: string | null,
+	/**  Chunk number of player segment 0; segment `s` is chunk `first + s`. */
+	first: number,
+	/**  Player segments (chunks `first..=last`, including missing ones). */
+	count: number,
+	/**  Chunk numbers in range that are not on disk (sorted). */
+	missing: number[],
+	chunkS: number,
+	/**  Start time of the first chunk; the player sets `timestampOffset = -v0`. */
+	v0: number,
 };
 
 export type DiscoveryInfo = {
@@ -326,10 +352,24 @@ export type PreviewInfo = {
 	/**  For `MediaSource.addSourceBuffer`. */
 	mime: string,
 	fps: number,
-	backend: Backend,
+	/**  `None` while transcoding is off (the original video plays). */
+	backend: Backend | null,
+	mode: PreviewMode,
+	/**  Set when the original chunks may be played (mode `auto` or `original`). */
+	direct: DirectInfo | null,
 };
 
+/**  How the preview plays (setting `previewMode`). */
+export type PreviewMode = 
+/**  The original video when the webview can decode it, else a transcoded preview. */
+"auto" | 
+/**  Always the original video; errors are shown instead of falling back. */
+"original" | 
+/**  Always the transcoded preview. */
+"transcode";
+
 export type PreviewSettings = {
+	mode: PreviewMode,
 	/**  Chosen in the settings; `None` means detect automatically. */
 	backend: Backend | null,
 	detected: Backend | null,

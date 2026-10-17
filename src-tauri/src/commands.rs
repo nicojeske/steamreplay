@@ -16,7 +16,7 @@ use crate::fireshare::{self, FireshareConfig, FireshareOptions, UploadMeta, Uplo
 use crate::media::ffmpeg::{self, FfmpegPaths};
 use crate::media::pyramid::Samples;
 use crate::media::spikes::{self, Spike, SpikeParams};
-use crate::media::preview::{self, Backend, PreviewCache, PreviewInfo, PreviewState, SessionSetup};
+use crate::media::preview::{self, Backend, PreviewCache, PreviewInfo, PreviewMode, PreviewState, SessionSetup};
 use crate::media::encoders::{self, Capabilities, VideoCodec};
 use crate::media::export::{
     self, ExportMode, ExportModeKind, ExportPrefs, ExportRequest, ExportResult, RecentEntry, RecentExport, Snap,
@@ -411,6 +411,7 @@ pub async fn set_ffmpeg_dir(app: AppHandle, state: State<'_, MediaState>, path: 
 const PREVIEW_BACKEND_KEY: &str = "previewBackend";
 const PREVIEW_DETECTED_KEY: &str = "previewBackendDetected";
 const PREVIEW_CACHE_KEY: &str = "previewCacheMb";
+const PREVIEW_MODE_KEY: &str = "previewMode";
 
 fn read_setting<T: serde::de::DeserializeOwned>(app: &AppHandle, key: &str) -> Option<T> {
     let store = app.store(SETTINGS_STORE).ok()?;
@@ -443,7 +444,8 @@ async fn preview_backend(
     preview: &PreviewState,
     media: &MediaState,
     paths: &FfmpegPaths,
-    detail: &SessionDetail,
+    dir: &Path,
+    first_chunk: u32,
 ) -> Backend {
     if let Some(b) = read_setting::<Backend>(app, PREVIEW_BACKEND_KEY) {
         return b;
@@ -457,7 +459,7 @@ async fn preview_backend(
     }
     let cancel = CancellationToken::new();
     let caps = capabilities(media, paths).await;
-    let b = preview::transcode::detect(paths, &caps, &detail.summary.dir, detail.chunks.first, &preview.cache.tmp_dir(), &cancel).await;
+    let b = preview::transcode::detect(paths, &caps, dir, first_chunk, &preview.cache.tmp_dir(), &cancel).await;
     *preview.detected.lock().expect("detected lock") = Some(b);
     if let Err(e) = write_setting(app, PREVIEW_DETECTED_KEY, Some(b)) {
         log::warn!("could not store the preview backend: {e}");
@@ -465,7 +467,9 @@ async fn preview_backend(
     b
 }
 
-/// Opens the preview of a session and starts preparing the first segments.
+/// Opens the preview of a session. When the original video may be played (`PreviewInfo::direct`),
+/// nothing is transcoded until the player asks for it (`preview_fallback`); otherwise the first
+/// segments start right away.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_preview_info(
@@ -481,13 +485,14 @@ pub async fn get_preview_info(
     if detail.chunks.count == 0 {
         return Err(AppError::NotFound(format!("{id} has no video chunks")));
     }
+    let mode: PreviewMode = read_setting(&app, PREVIEW_MODE_KEY).unwrap_or_default();
     if let Some(s) = preview.get(&id)
         && s.inv == detail.chunks
+        && s.mode == mode
     {
         return Ok(s.info());
     }
     let paths = ffmpeg_paths(&app, &media).await?;
-    let backend = preview_backend(&app, &preview, &media, &paths, &detail).await;
     let dir = detail.summary.dir.clone();
     let v0 = chunks::probe_start(&paths, &dir, chunks::VIDEO_INIT, &chunks::video_chunk(detail.chunks.first), &CancellationToken::new())
         .await?;
@@ -500,8 +505,40 @@ pub async fn get_preview_info(
         .await?;
     }
     let chunk_s = detail.mpd.as_ref().map_or(3.0, |m| m.segment_duration_s);
-    let session = preview.open(SessionSetup { id, dir, inv: detail.chunks, chunk_s, v0, paths, backend });
+    let direct = match (&detail.mpd, mode) {
+        (Some(m), PreviewMode::Auto | PreviewMode::Original) => {
+            preview::direct_info(&detail.chunks, chunk_s, v0, &m.video.codecs, &m.audio.codecs)
+        }
+        _ => None,
+    };
+    let backend = match direct {
+        Some(_) => None,
+        None => Some(preview_backend(&app, &preview, &media, &paths, &dir, detail.chunks.first).await),
+    };
+    let session = preview.open(SessionSetup { id, dir, inv: detail.chunks, chunk_s, v0, paths, backend, mode, direct });
     session.set_playhead(0.0);
+    Ok(session.info())
+}
+
+/// The player cannot play the original video: turns on transcoding (detecting the backend if
+/// needed) and prepares the segments around `t`.
+#[tauri::command]
+#[specta::specta]
+pub async fn preview_fallback(
+    app: AppHandle,
+    media: State<'_, MediaState>,
+    preview: State<'_, PreviewState>,
+    id: String,
+    t: f64,
+) -> AppResult<PreviewInfo> {
+    let session = preview.get(&id).ok_or_else(|| AppError::NotFound(format!("preview of {id} is not open")))?;
+    if !session.is_transcoding() {
+        let paths = ffmpeg_paths(&app, &media).await?;
+        let b = preview_backend(&app, &preview, &media, &paths, session.dir(), session.inv.first).await;
+        log::info!("preview of {id}: original video not playable, transcoding with {b:?}");
+        session.enable_transcoding(b);
+    }
+    session.set_playhead(t);
     Ok(session.info())
 }
 
@@ -526,6 +563,7 @@ pub async fn preview_close(preview: State<'_, PreviewState>, id: String) -> AppR
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewSettings {
+    pub mode: PreviewMode,
     /// Chosen in the settings; `None` means detect automatically.
     pub backend: Option<Backend>,
     pub detected: Option<Backend>,
@@ -541,6 +579,7 @@ pub async fn get_preview_settings(app: AppHandle, preview: State<'_, PreviewStat
     let cache_bytes = blocking(move || Ok(cache.size())).await?;
     let detected = *preview.detected.lock().expect("detected lock");
     Ok(PreviewSettings {
+        mode: read_setting(&app, PREVIEW_MODE_KEY).unwrap_or_default(),
         backend: read_setting(&app, PREVIEW_BACKEND_KEY),
         detected: detected.or_else(|| read_setting(&app, PREVIEW_DETECTED_KEY)),
         cache_mb: (preview.cache.limit_bytes() / 1024 / 1024) as u32,
@@ -549,16 +588,18 @@ pub async fn get_preview_settings(app: AppHandle, preview: State<'_, PreviewStat
 }
 
 /// `backend: None` returns to automatic detection, which runs again the next time a preview
-/// opens.
+/// transcodes. A new `mode` applies the next time a preview opens.
 #[tauri::command]
 #[specta::specta]
 pub async fn set_preview_settings(
     app: AppHandle,
     preview: State<'_, PreviewState>,
+    mode: PreviewMode,
     backend: Option<Backend>,
     cache_mb: u32,
 ) -> AppResult<()> {
     let cache_mb = cache_mb.max(100);
+    write_setting(&app, PREVIEW_MODE_KEY, Some(mode))?;
     write_setting(&app, PREVIEW_BACKEND_KEY, backend)?;
     write_setting(&app, PREVIEW_CACHE_KEY, Some(cache_mb))?;
     match backend {
@@ -698,7 +739,7 @@ pub async fn export_clip(
         ExportMode::Fast => (export::Plan::Copy, snap.actual_in_s, snap.actual_out_s),
         ExportMode::Precise(opts) => {
             let caps = capabilities(&state, &paths).await;
-            let backend = preview_backend(&app, &preview, &state, &paths, &detail).await;
+            let backend = preview_backend(&app, &preview, &state, &paths, &detail.summary.dir, detail.chunks.first).await;
             let choice = encoders::choose(backend, opts.codec, &caps)
                 .ok_or_else(|| AppError::Ffmpeg(format!("this ffmpeg has no {:?} encoder", opts.codec)))?;
             let fallback = encoders::software(opts.codec, &caps);
@@ -765,7 +806,7 @@ pub async fn get_export_capabilities(
     };
     let paths = ffmpeg_paths(&app, &state).await?;
     let caps = capabilities(&state, &paths).await;
-    let backend = preview_backend(&app, &preview, &state, &paths, &detail).await;
+    let backend = preview_backend(&app, &preview, &state, &paths, &detail.summary.dir, detail.chunks.first).await;
     Ok(VideoCodec::ALL.into_iter().filter(|&c| encoders::choose(backend, c, &caps).is_some()).collect())
 }
 

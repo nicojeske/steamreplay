@@ -1,7 +1,8 @@
-//! Low-res H.264 preview of a session (M4). Segments of 4 chunks (12 s) are transcoded on
-//! demand, cached on disk (`cache.rs`) and served to the player through the `replay://`
-//! protocol (`protocol.rs`). Each open session has a small job queue ordered by distance to the
-//! playhead.
+//! Preview of a session. When the webview can decode HEVC (M11), the player appends Steam's
+//! original chunks directly (`DirectInfo`, served raw by `protocol.rs`). Otherwise (M4) segments
+//! of 4 chunks (12 s) are transcoded to H.264 on demand, cached on disk (`cache.rs`) and served
+//! through the `replay://` protocol. Each open session has a small job queue ordered by distance
+//! to the playhead; it stays idle until transcoding is enabled.
 
 pub mod cache;
 pub mod protocol;
@@ -9,11 +10,11 @@ pub mod transcode;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 use tokio::sync::{Notify, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -26,8 +27,8 @@ use crate::error::{AppError, AppResult};
 use crate::steam::recordings::ChunkInventory;
 
 pub const SEGMENT_CHUNKS: u32 = 4;
-/// MSE type of every segment: `-profile:v high -level 4.0` and Steam's AAC-LC.
-pub const MIME: &str = r#"video/mp4; codecs="avc1.640028, mp4a.40.2""#;
+/// MSE type of every segment: `-profile:v high -level 5.1` and Steam's AAC-LC.
+pub const MIME: &str = r#"video/mp4; codecs="avc1.640033, mp4a.40.2""#;
 /// Steam records at about 60 fps and the preview keeps the frame rate.
 pub const PREVIEW_FPS: f64 = 60.0;
 /// Queued segments further than this from the playhead are dropped, running ones cancelled.
@@ -89,6 +90,55 @@ pub fn is_stale(segment: u32, playhead: u32) -> bool {
     segment.abs_diff(playhead) > STALE_SEGMENTS
 }
 
+/// How the preview plays (setting `previewMode`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum PreviewMode {
+    /// The original video when the webview can decode it, else a transcoded preview.
+    #[default]
+    Auto,
+    /// Always the original video; errors are shown instead of falling back.
+    Original,
+    /// Always the transcoded preview.
+    Transcode,
+}
+
+/// What the player needs to append Steam's original chunks (`replay://…/chunk/…`).
+#[derive(Debug, Clone, PartialEq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectInfo {
+    /// For `MediaSource.addSourceBuffer`, from `session.mpd`.
+    pub video_mime: String,
+    /// `None` when the session has no audio stream.
+    pub audio_mime: Option<String>,
+    /// Chunk number of player segment 0; segment `s` is chunk `first + s`.
+    pub first: u32,
+    /// Player segments (chunks `first..=last`, including missing ones).
+    pub count: u32,
+    /// Chunk numbers in range that are not on disk (sorted).
+    pub missing: Vec<u32>,
+    #[specta(type = specta_typescript::Number)]
+    pub chunk_s: f64,
+    /// Start time of the first chunk; the player sets `timestampOffset = -v0`.
+    #[specta(type = specta_typescript::Number)]
+    pub v0: f64,
+}
+
+pub fn direct_info(inv: &ChunkInventory, chunk_s: f64, v0: f64, video_codecs: &str, audio_codecs: &str) -> Option<DirectInfo> {
+    if inv.count == 0 || video_codecs.is_empty() {
+        return None;
+    }
+    Some(DirectInfo {
+        video_mime: format!(r#"video/mp4; codecs="{video_codecs}""#),
+        audio_mime: (!audio_codecs.is_empty()).then(|| format!(r#"audio/mp4; codecs="{audio_codecs}""#)),
+        first: inv.first,
+        count: inv.last - inv.first + 1,
+        missing: inv.missing.clone(),
+        chunk_s,
+        v0,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewInfo {
@@ -99,7 +149,11 @@ pub struct PreviewInfo {
     pub mime: String,
     #[specta(type = specta_typescript::Number)]
     pub fps: f64,
-    pub backend: Backend,
+    /// `None` while transcoding is off (the original video plays).
+    pub backend: Option<Backend>,
+    pub mode: PreviewMode,
+    /// Set when the original chunks may be played (mode `auto` or `original`).
+    pub direct: Option<DirectInfo>,
 }
 
 type Waiter = oneshot::Sender<AppResult<PathBuf>>;
@@ -125,6 +179,10 @@ pub struct PreviewSession {
     cache: Arc<PreviewCache>,
     cache_dir: PathBuf,
     backend: Mutex<Backend>,
+    /// Off while the player shows the original video: no prefetch, no backend detection.
+    transcoding: AtomicBool,
+    pub mode: PreviewMode,
+    direct: Option<DirectInfo>,
     hw_failures: AtomicU32,
     cancel: CancellationToken,
     queue: Mutex<Queue>,
@@ -138,7 +196,10 @@ pub struct SessionSetup {
     pub chunk_s: f64,
     pub v0: f64,
     pub paths: FfmpegPaths,
-    pub backend: Backend,
+    /// `None`: transcoding starts off (direct playback), see `enable_transcoding`.
+    pub backend: Option<Backend>,
+    pub mode: PreviewMode,
+    pub direct: Option<DirectInfo>,
 }
 
 impl PreviewSession {
@@ -153,7 +214,10 @@ impl PreviewSession {
             paths: setup.paths,
             cache,
             cache_dir,
-            backend: Mutex::new(setup.backend),
+            transcoding: AtomicBool::new(setup.backend.is_some()),
+            backend: Mutex::new(setup.backend.unwrap_or(Backend::Software)),
+            mode: setup.mode,
+            direct: setup.direct,
             hw_failures: AtomicU32::new(0),
             cancel: parent.child_token(),
             queue: Mutex::new(Queue::default()),
@@ -179,13 +243,30 @@ impl PreviewSession {
         self.hw_failures.store(0, Ordering::Relaxed);
     }
 
+    pub fn is_transcoding(&self) -> bool {
+        self.transcoding.load(Ordering::Relaxed)
+    }
+
+    /// The player could not play the original video: transcode from now on.
+    pub fn enable_transcoding(&self, b: Backend) {
+        self.set_backend(b);
+        self.transcoding.store(true, Ordering::Relaxed);
+    }
+
+    /// The bg folder with the chunks (for the raw chunk URLs).
+    pub fn dir(&self) -> &std::path::Path {
+        &self.dir
+    }
+
     pub fn info(&self) -> PreviewInfo {
         PreviewInfo {
             segment_s: self.segment_s,
             count: self.count(),
             mime: MIME.to_owned(),
             fps: PREVIEW_FPS,
-            backend: self.backend(),
+            backend: self.is_transcoding().then(|| self.backend()),
+            mode: self.mode,
+            direct: self.direct.clone(),
         }
     }
 
@@ -228,7 +309,7 @@ impl PreviewSession {
     /// Moves the queue to a new playhead: drops and cancels far-away work, queues prefetch.
     pub fn set_playhead(&self, t: f64) {
         let count = self.count();
-        if count == 0 {
+        if count == 0 || !self.is_transcoding() {
             return;
         }
         let playhead = ((t.max(0.0) / self.segment_s) as u32).min(count - 1);
@@ -370,6 +451,7 @@ impl PreviewState {
         let mut sessions = self.sessions.lock().expect("sessions lock");
         if let Some(s) = sessions.get(&setup.id)
             && s.inv == setup.inv
+            && s.mode == setup.mode
             && !s.cancel.is_cancelled()
         {
             return s.clone();
@@ -390,7 +472,9 @@ impl PreviewState {
 
     pub fn set_backend(&self, b: Backend) {
         for s in self.sessions.lock().expect("sessions lock").values() {
-            s.set_backend(b);
+            if s.is_transcoding() {
+                s.set_backend(b);
+            }
         }
     }
 
@@ -445,6 +529,18 @@ mod tests {
         assert_eq!(segment_plan(&i, 1).unwrap().chunks, vec![5, 8]);
         let all_missing = inv(1, 9, vec![5, 6, 7, 8]);
         assert!(segment_plan(&all_missing, 1).unwrap().chunks.is_empty());
+    }
+
+    #[test]
+    fn direct_chunks() {
+        let i = inv(3418, 3427, vec![3420]);
+        let d = direct_info(&i, 3.0, 10251.0, "hev1.2.4.L123.B0", "mp4a.40.2").unwrap();
+        assert_eq!(d.video_mime, r#"video/mp4; codecs="hev1.2.4.L123.B0""#);
+        assert_eq!(d.audio_mime.as_deref(), Some(r#"audio/mp4; codecs="mp4a.40.2""#));
+        assert_eq!((d.first, d.count, d.missing), (3418, 10, vec![3420]));
+        assert_eq!(direct_info(&i, 3.0, 0.0, "hev1", "").unwrap().audio_mime, None);
+        assert_eq!(direct_info(&i, 3.0, 0.0, "", "mp4a.40.2"), None);
+        assert_eq!(direct_info(&ChunkInventory::default(), 3.0, 0.0, "hev1", ""), None);
     }
 
     #[test]

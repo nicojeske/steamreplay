@@ -1,4 +1,4 @@
-//! One preview segment: Steam's HEVC chunks → 360p H.264 fragmented MP4, with the original AAC
+//! One preview segment: Steam's HEVC chunks → 720p H.264 fragmented MP4, with the original AAC
 //! copied. Timestamps are kept (`-copyts`) and shifted to video time, so the player can append
 //! segments to one `SourceBuffer` without offset math, and the audio keeps its small lead-in.
 
@@ -77,13 +77,13 @@ impl Backend {
     /// `yuvj420p`, which some encoders refuse).
     fn encode_args(self) -> &'static [&'static str] {
         match self {
-            Self::Cuda => &["-vf", "scale_cuda=-2:360:format=yuv420p", "-c:v", "h264_nvenc", "-preset", "p2", "-cq", "28"],
-            Self::D3d11vaAmf => &["-vf", "scale=-2:360,format=yuv420p", "-c:v", "h264_amf", "-quality", "speed", "-b:v", "2M"],
+            Self::Cuda => &["-vf", "scale_cuda=-2:720:format=yuv420p", "-c:v", "h264_nvenc", "-preset", "p2", "-cq", "23"],
+            Self::D3d11vaAmf => &["-vf", "scale=-2:720,format=yuv420p", "-c:v", "h264_amf", "-quality", "speed", "-b:v", "6M"],
             Self::D3d11vaQsv | Self::Qsv => {
-                &["-vf", "scale=-2:360,format=nv12", "-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "28"]
+                &["-vf", "scale=-2:720,format=nv12", "-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "23"]
             }
-            Self::Vaapi => &["-vf", "scale_vaapi=w=-2:h=360:format=nv12", "-c:v", "h264_vaapi", "-qp", "26"],
-            Self::Software => &["-vf", "scale=-2:360,format=yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26"],
+            Self::Vaapi => &["-vf", "scale_vaapi=w=-2:h=720:format=nv12", "-c:v", "h264_vaapi", "-qp", "22"],
+            Self::Software => &["-vf", "scale=-2:720,format=yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22"],
         }
     }
 }
@@ -102,8 +102,8 @@ pub fn args(backend: Backend, audio: Option<&Path>, v0: f64, out: &Path) -> Vec<
     }
     a.extend(backend.encode_args().iter().map(OsString::from));
     // One keyframe per second at 60 fps, no B-frames: cheap seeking and a fixed codec string
-    // (`avc1.640028`, see `MIME`).
-    a.extend(["-g", "60", "-bf", "0", "-profile:v", "high", "-level", "4.0"].map(OsString::from));
+    // (`avc1.640033`, see `MIME`). Level 5.1 covers 2560×720 at 60 fps (5120×1440 sources).
+    a.extend(["-g", "60", "-bf", "0", "-profile:v", "high", "-level", "5.1"].map(OsString::from));
     if audio.is_some() {
         // The original AAC lines up with the chunks; re-encoding added priming samples at
         // every segment start.
@@ -275,14 +275,14 @@ mod tests {
         let audio = Path::new("a.mp4");
         let cuda = joined(&args(Backend::Cuda, Some(audio), 10251.0025, out));
         assert!(cuda.starts_with("-copyts -hwaccel cuda -hwaccel_output_format cuda -i pipe:0 -i a.mp4 -map 0:v:0 -map 1:a:0"));
-        assert!(cuda.contains("scale_cuda=-2:360:format=yuv420p -c:v h264_nvenc"));
+        assert!(cuda.contains("scale_cuda=-2:720:format=yuv420p -c:v h264_nvenc"));
         assert!(cuda.contains("-c:a copy -output_ts_offset -10251.0025 "));
         assert!(cuda.ends_with("+frag_keyframe+empty_moov+default_base_moof+frag_discont -f mp4 -y out.mp4"));
 
         let sw = joined(&args(Backend::Software, None, 0.0, out));
-        assert!(sw.starts_with("-copyts -i pipe:0 -map 0:v:0 -vf scale=-2:360,format=yuv420p -c:v libx264"));
+        assert!(sw.starts_with("-copyts -i pipe:0 -map 0:v:0 -vf scale=-2:720,format=yuv420p -c:v libx264"));
         assert!(!sw.contains("-c:a"));
-        assert!(sw.contains("-profile:v high -level 4.0"));
+        assert!(sw.contains("-profile:v high -level 5.1"));
 
         for b in Backend::candidates() {
             let a = joined(&args(*b, Some(audio), 0.0, out));
@@ -335,7 +335,7 @@ mod tests {
                 eprintln!("{probe}");
                 let mut lines = probe.lines();
                 let video: Vec<&str> = lines.next().unwrap().split(',').collect();
-                assert_eq!(&video[..4], ["h264", "High", "360", "40"]); // ffprobe orders height before level
+                assert_eq!(&video[..4], ["h264", "High", "720", "51"]); // ffprobe orders height before level
                 let start: f64 = video[4].parse().unwrap();
                 assert!((start - shift).abs() < 0.05, "start {start}, expected {shift}");
                 assert!(lines.next().unwrap().starts_with("aac"));

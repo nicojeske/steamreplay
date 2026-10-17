@@ -1,6 +1,6 @@
 # M4: Video preview synced with the timeline
 
-> Built **before** M3 (see the build order in `00-overview.md`). This spec describes what was implemented.
+> Built **before** M3 (see the build order in `00-overview.md`). This spec describes what was implemented. **M11** made the original video the default and this transcode the fallback (now 720p, level 5.1, `avc1.640033`); see `11-direct-preview.md`.
 
 ## 1. Goal and user-visible outcome
 A video player above the timeline shows the recording at the playhead. You can play, pause and scrub. Clicking the timeline or a spike (or pressing N/P) moves the player there. While playing, the timeline playhead moves along and the view pages with it. The preview is low-res (360 p high) and plays smoothly, and after a seek it starts in about 1.4 s (cold) or < 100 ms (cached).
@@ -14,7 +14,7 @@ A video player above the timeline shows the recording at the playhead. You can p
 
 **Non-goals:**
 - full-quality preview,
-- playing the original HEVC in the webview (not reliable, see the risks),
+- playing the original HEVC in the webview (assumed unreliable; M11 tested it and now does it, see `11-direct-preview.md`),
 - audio-only scrubbing sounds,
 - **loop selection** (`Ctrl+L`): it needs the in/out selection, so it moved to M3.
 

@@ -24,6 +24,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::get_preview_info,
         commands::preview_playhead,
         commands::preview_close,
+        commands::preview_fallback,
         commands::get_preview_settings,
         commands::set_preview_settings,
         commands::clear_preview_cache,
