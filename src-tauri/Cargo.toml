@@ -1,6 +1,6 @@
 [package]
 name = "steamreplay"
-version = "0.3.1"
+version = "0.3.2"
 description = "Find and export the loud moments in Steam game recordings"
 authors = ["Nico Jeske"]
 license = "GPL-3.0-only"
