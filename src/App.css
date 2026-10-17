@@ -191,3 +191,29 @@ dialog.settings h3 { font-size: 13px; margin: 18px 0 6px; color: var(--muted); }
   border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
 }
 .settings input[type="number"] { width: 100px; }
+
+.loudness-lane { margin-top: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); overflow: hidden; }
+.loudness-lane canvas { display: block; }
+.spike-header { display: flex; align-items: baseline; gap: 8px; }
+.spike-header button.link { font-size: 13px; font-weight: normal; }
+.spike-tuning {
+  margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel); font-variant-numeric: tabular-nums;
+}
+.spike-tuning-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.spike-slider { display: flex; align-items: center; gap: 8px; }
+.spike-slider input[type="range"] { width: 160px; }
+.spike-slider.main input[type="range"] { width: 240px; }
+.spike-slider .mono { min-width: 70px; }
+.spike-advanced summary { cursor: pointer; width: fit-content; margin-top: 6px; }
+.spike-advanced-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 6px 16px; margin-top: 6px; }
+.spike-advanced-grid .spike-slider > span:first-child { width: 110px; }
+.recent-exports summary { cursor: pointer; width: fit-content; margin-bottom: 4px; }
+.recent-exports li.muted .export-file { text-decoration: line-through; }
+dialog.shortcuts table { border-collapse: collapse; width: 100%; }
+dialog.shortcuts td { padding: 3px 8px 3px 0; vertical-align: top; }
+dialog.shortcuts td:first-child { width: 190px; white-space: nowrap; }
+kbd {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px;
+  padding: 1px 6px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--bg);
+}

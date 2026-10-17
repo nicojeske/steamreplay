@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::audio::{BIN_MS, Bin};
+use super::pyramid::FACTOR;
 
 /// Floor for the dB conversion (−100 dB).
 const DB_FLOOR_RMS: f32 = 1e-5;
@@ -47,6 +48,40 @@ impl Default for SpikeParams {
             max_results: 200,
         }
     }
+}
+
+impl SpikeParams {
+    /// The values limited to what the tuning sliders allow (a hand-edited store can hold anything).
+    pub fn clamped(&self) -> Self {
+        let f = |v: f32, lo: f32, hi: f32| if v.is_finite() { v.clamp(lo, hi) } else { lo };
+        Self {
+            short_ms: self.short_ms.clamp(50, 2000),
+            baseline_s: f(self.baseline_s, 5.0, 120.0),
+            threshold_db: f(self.threshold_db, 3.0, 25.0),
+            min_len_ms: self.min_len_ms.clamp(100, 2000),
+            merge_gap_s: f(self.merge_gap_s, 0.0, 20.0),
+            pad_s: f(self.pad_s, 0.0, 5.0),
+            max_results: self.max_results.clamp(1, 1000),
+        }
+    }
+}
+
+/// Reads params stored by any version: missing fields take the defaults, extra fields are
+/// ignored. (Not `#[serde(default)]`, which would make every field optional in TypeScript.)
+pub fn params_from_json(v: serde_json::Value) -> Option<SpikeParams> {
+    let serde_json::Value::Object(stored) = v else { return None };
+    let Ok(serde_json::Value::Object(mut merged)) = serde_json::to_value(SpikeParams::default()) else { return None };
+    for (k, v) in stored {
+        if merged.contains_key(&k) {
+            merged.insert(k, v);
+        }
+    }
+    serde_json::from_value(serde_json::Value::Object(merged)).ok()
+}
+
+/// The game's preset, else the user's defaults, else the built-in values; always clamped.
+pub fn resolve_spike_params(preset: Option<SpikeParams>, defaults: Option<SpikeParams>) -> SpikeParams {
+    preset.or(defaults).unwrap_or_default().clamped()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
@@ -143,28 +178,71 @@ struct Region {
     active_bins: usize,
 }
 
-pub fn detect(level0: &[Bin], p: &SpikeParams) -> Vec<Spike> {
-    let n = level0.len();
+/// The expensive part of the detection: short-term loudness and its rolling-median baseline,
+/// per level-0 bin, in dB. Depends only on `short_ms` and `baseline_s`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Curves {
+    pub st: Vec<f32>,
+    pub base: Vec<Option<f32>>,
+    /// Not digital silence.
+    pub include: Vec<bool>,
+}
+
+pub fn curves(level0: &[Bin], short_ms: u32, baseline_s: f32) -> Curves {
+    let db: Vec<f32> = level0.iter().map(|b| 20.0 * b[2].max(DB_FLOOR_RMS).log10()).collect();
+    let include: Vec<bool> = level0.iter().map(|b| b[2] >= SILENCE_RMS).collect();
+    let st = centred_mean(&db, bins_for_ms(f64::from(short_ms)));
+    let base = sliding_median(&st, &include, bins_for_ms(f64::from(baseline_s) * 1000.0));
+    Curves { st, base, include }
+}
+
+impl Curves {
+    /// How far the short-term loudness is above the baseline, where both exist.
+    fn excess(&self, j: usize) -> Option<f32> {
+        self.base[j].filter(|_| self.include[j]).map(|b| self.st[j] - b)
+    }
+}
+
+/// Flat `[min, max]*` of `st − base` for `count` bins of pyramid `level` from `start`, like
+/// `Pyramid::slice`. Bins without a baseline or in silence count as 0.
+pub fn loudness_slice(c: &Curves, level: u32, start: usize, count: usize) -> Vec<f32> {
+    let span = FACTOR.pow(level);
+    let n = c.st.len();
+    let mut out = Vec::with_capacity(count * 2);
+    for b in start..start.saturating_add(count) {
+        let lo = b.saturating_mul(span);
+        if lo >= n {
+            break;
+        }
+        let (mut min, mut max) = (f32::INFINITY, f32::NEG_INFINITY);
+        for j in lo..(lo + span).min(n) {
+            let e = c.excess(j).unwrap_or(0.0);
+            min = min.min(e);
+            max = max.max(e);
+        }
+        out.extend([min, max]);
+    }
+    out
+}
+
+/// The cheap part: runs above the threshold, min length, merge, pad, score and sort. O(n).
+pub fn regions(c: &Curves, p: &SpikeParams) -> Vec<Spike> {
+    let n = c.st.len();
     if n == 0 {
         return Vec::new();
     }
     let bin_s = f64::from(BIN_MS) / 1000.0;
-    let db: Vec<f32> = level0.iter().map(|b| 20.0 * b[2].max(DB_FLOOR_RMS).log10()).collect();
-    let include: Vec<bool> = level0.iter().map(|b| b[2] >= SILENCE_RMS).collect();
-    let st = centred_mean(&db, bins_for_ms(f64::from(p.short_ms)));
-    let base = sliding_median(&st, &include, bins_for_ms(f64::from(p.baseline_s) * 1000.0));
 
     // Runs above the threshold.
     let min_len = bins_for_ms(f64::from(p.min_len_ms));
     let mut regions: Vec<Region> = Vec::new();
     let mut i = 0;
     while i < n {
-        let excess = |j: usize| base[j].filter(|_| include[j]).map(|b| st[j] - b);
-        if excess(i).is_some_and(|e| e > p.threshold_db) {
+        if c.excess(i).is_some_and(|e| e > p.threshold_db) {
             let start = i;
             let (mut peak, mut peak_excess) = (i, f32::NEG_INFINITY);
             while i < n
-                && let Some(e) = excess(i).filter(|e| *e > p.threshold_db)
+                && let Some(e) = c.excess(i).filter(|e| *e > p.threshold_db)
             {
                 if e > peak_excess {
                     (peak, peak_excess) = (i, e);
@@ -213,6 +291,12 @@ pub fn detect(level0: &[Bin], p: &SpikeParams) -> Vec<Spike> {
     spikes.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.start_s.total_cmp(&b.start_s)));
     spikes.truncate(p.max_results as usize);
     spikes
+}
+
+/// Both stages in one go. The app caches the curves instead (`Analysis::curves_for`).
+#[cfg(test)]
+pub fn detect(level0: &[Bin], p: &SpikeParams) -> Vec<Spike> {
+    regions(&curves(level0, p.short_ms, p.baseline_s), p)
 }
 
 #[cfg(test)]
@@ -328,6 +412,165 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The single-stage detector from before the curves/regions split.
+    fn detect_reference(level0: &[Bin], p: &SpikeParams) -> Vec<Spike> {
+        let n = level0.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        let bin_s = f64::from(BIN_MS) / 1000.0;
+        let db: Vec<f32> = level0.iter().map(|b| 20.0 * b[2].max(DB_FLOOR_RMS).log10()).collect();
+        let include: Vec<bool> = level0.iter().map(|b| b[2] >= SILENCE_RMS).collect();
+        let st = centred_mean(&db, bins_for_ms(f64::from(p.short_ms)));
+        let base = sliding_median(&st, &include, bins_for_ms(f64::from(p.baseline_s) * 1000.0));
+
+        // Runs above the threshold.
+        let min_len = bins_for_ms(f64::from(p.min_len_ms));
+        let mut regions: Vec<Region> = Vec::new();
+        let mut i = 0;
+        while i < n {
+            let excess = |j: usize| base[j].filter(|_| include[j]).map(|b| st[j] - b);
+            if excess(i).is_some_and(|e| e > p.threshold_db) {
+                let start = i;
+                let (mut peak, mut peak_excess) = (i, f32::NEG_INFINITY);
+                while i < n
+                    && let Some(e) = excess(i).filter(|e| *e > p.threshold_db)
+                {
+                    if e > peak_excess {
+                        (peak, peak_excess) = (i, e);
+                    }
+                    i += 1;
+                }
+                if i - start >= min_len {
+                    regions.push(Region { start, end: i, peak, peak_excess, active_bins: i - start });
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        // Merge regions that are close together.
+        let merge_gap = bins_for_ms(f64::from(p.merge_gap_s) * 1000.0);
+        let mut merged: Vec<Region> = Vec::new();
+        for r in regions {
+            match merged.last_mut() {
+                Some(m) if r.start - m.end < merge_gap => {
+                    m.end = r.end;
+                    m.active_bins += r.active_bins;
+                    if r.peak_excess > m.peak_excess {
+                        (m.peak, m.peak_excess) = (r.peak, r.peak_excess);
+                    }
+                }
+                _ => merged.push(r),
+            }
+        }
+
+        let duration_s = n as f64 * bin_s;
+        let pad = f64::from(p.pad_s);
+        let mut spikes: Vec<Spike> = merged
+            .into_iter()
+            .map(|r| {
+                let active_s = r.active_bins as f32 * bin_s as f32;
+                Spike {
+                    start_s: (r.start as f64 * bin_s - pad).max(0.0),
+                    end_s: (r.end as f64 * bin_s + pad).min(duration_s),
+                    peak_s: (r.peak as f64 + 0.5) * bin_s,
+                    peak_excess_db: r.peak_excess,
+                    score: r.peak_excess + 3.0 * (1.0 + active_s).log2(),
+                }
+            })
+            .collect();
+        spikes.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.start_s.total_cmp(&b.start_s)));
+        spikes.truncate(p.max_results as usize);
+        spikes
+    }
+
+    #[test]
+    fn two_stage_matches_reference() {
+        let mut rng = Rng(777);
+        // Random walk around −40 dB with silent stretches and bursts.
+        let mut db = -40.0f32;
+        let random: Vec<Bin> = (0..60_000)
+            .map(|i| {
+                db = (db + (rng.next() - 0.5) * 3.0).clamp(-70.0, -5.0);
+                let r = if (20_000..21_500).contains(&i) { 0.0 } else { db_to_rms(db) };
+                [-r, r, r]
+            })
+            .collect();
+        let fixtures = [
+            random,
+            signal(300.0, &[(60.0, 1.0), (150.0, 1.0), (240.0, 1.0)]),
+            signal(300.0, &[(100.0, 1.0), (104.0, 1.0), (200.0, 0.2)]),
+            vec![[0.0; 3]; 1000],
+            Vec::new(),
+        ];
+        let params = [
+            SpikeParams::default(),
+            SpikeParams { threshold_db: 4.0, min_len_ms: 100, merge_gap_s: 0.0, pad_s: 0.0, ..SpikeParams::default() },
+            SpikeParams { short_ms: 50, baseline_s: 120.0, threshold_db: 6.0, max_results: 5, ..SpikeParams::default() },
+            SpikeParams { baseline_s: 5.0, merge_gap_s: 20.0, pad_s: 5.0, ..SpikeParams::default() },
+        ];
+        for (fi, x) in fixtures.iter().enumerate() {
+            for p in &params {
+                assert_eq!(regions(&curves(x, p.short_ms, p.baseline_s), p), detect_reference(x, p), "fixture {fi}, {p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn params_clamped_and_resolved() {
+        let wild = SpikeParams {
+            short_ms: 1,
+            baseline_s: 1000.0,
+            threshold_db: f32::NAN,
+            min_len_ms: 0,
+            merge_gap_s: -3.0,
+            pad_s: 99.0,
+            max_results: 0,
+        };
+        let c = wild.clamped();
+        assert_eq!(
+            c,
+            SpikeParams {
+                short_ms: 50,
+                baseline_s: 120.0,
+                threshold_db: 3.0,
+                min_len_ms: 100,
+                merge_gap_s: 0.0,
+                pad_s: 5.0,
+                max_results: 1,
+            }
+        );
+        assert_eq!(SpikeParams::default().clamped(), SpikeParams::default());
+
+        let preset = SpikeParams { threshold_db: 6.0, ..SpikeParams::default() };
+        let defaults = SpikeParams { threshold_db: 14.0, ..SpikeParams::default() };
+        assert_eq!(resolve_spike_params(Some(preset.clone()), Some(defaults.clone())), preset);
+        assert_eq!(resolve_spike_params(None, Some(defaults.clone())), defaults);
+        assert_eq!(resolve_spike_params(None, None), SpikeParams::default());
+        assert_eq!(resolve_spike_params(Some(wild), None).short_ms, 50);
+    }
+
+    #[test]
+    fn missing_fields_fall_back_to_defaults() {
+        let p = params_from_json(serde_json::json!({ "thresholdDb": 7.5, "unknownField": 1 })).unwrap();
+        assert_eq!(p, SpikeParams { threshold_db: 7.5, ..SpikeParams::default() });
+        assert_eq!(params_from_json(serde_json::json!({ "thresholdDb": "loud" })), None);
+        assert_eq!(params_from_json(serde_json::json!(3)), None);
+    }
+
+    #[test]
+    fn loudness_slice_min_max() {
+        let c = Curves {
+            st: vec![-10.0, -20.0, -5.0, -30.0, -40.0],
+            base: vec![Some(-30.0), Some(-30.0), Some(-30.0), None, Some(-30.0)],
+            include: vec![true, true, true, true, false],
+        };
+        assert_eq!(loudness_slice(&c, 0, 1, 2), vec![10.0, 10.0, 25.0, 25.0]);
+        // Level 1 merges FACTOR bins; the last group is short; past the end gives nothing.
+        assert_eq!(loudness_slice(&c, 1, 0, 3), vec![0.0, 25.0, 0.0, 0.0]);
     }
 
     #[test]

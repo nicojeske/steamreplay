@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { commands, type PreviewInfo } from "../bindings";
 import { errorMessage, unwrap } from "../lib/ipc";
 import { formatTimecode } from "../lib/format";
-import { isTyping } from "../lib/keys";
+import { dialogOpen, isTyping } from "../lib/keys";
 import { MsePlayer, type PlayerStatus } from "../lib/msePlayer";
 import { followPlayhead, useView } from "../state/view";
 
@@ -126,12 +126,12 @@ export function Player({ id }: Props) {
     return () => window.clearInterval(timer);
   }, [reverse]);
 
-  // Keys: Space, J/K/L, ←/→ (Shift: 5 s), `,`/`.` (one frame).
+  // Keys: Space, J/K/L, ←/→ (Shift: 5 s), `,`/`.` (one frame). Listed in `SHORTCUTS` (lib/keys.ts).
   useEffect(() => {
     if (load.kind !== "ready") return;
     const fps = load.info.fps;
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.altKey || e.metaKey || isTyping(e.target)) return;
+      if (e.ctrlKey || e.altKey || e.metaKey || isTyping(e.target) || dialogOpen()) return;
       const video = videoRef.current;
       if (!video) return;
       const jump = (dt: number) => useView.getState().seek(video.currentTime + dt);

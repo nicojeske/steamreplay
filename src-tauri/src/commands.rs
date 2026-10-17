@@ -1,6 +1,7 @@
 //! Thin `#[tauri::command]` wrappers. The work happens in `steam/` and `media/`.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -16,7 +17,9 @@ use crate::media::pyramid::Samples;
 use crate::media::spikes::{self, Spike, SpikeParams};
 use crate::media::preview::{self, Backend, PreviewCache, PreviewInfo, PreviewState, SessionSetup};
 use crate::media::encoders::{self, Capabilities, VideoCodec};
-use crate::media::export::{self, ExportMode, ExportPrefs, ExportRequest, ExportResult, Snap};
+use crate::media::export::{
+    self, ExportMode, ExportModeKind, ExportPrefs, ExportRequest, ExportResult, RecentEntry, RecentExport, Snap,
+};
 use crate::media::{self, Analysis, MediaState, Progress, WaveformMeta, chunks};
 use crate::steam::locate::{self, RootCheck, SteamAccount};
 use crate::steam::recordings::{self, SessionDetail, SessionSummary};
@@ -243,7 +246,8 @@ pub async fn get_waveform(
     loaded(&app, &state, &id).await?.pyramid.slice(level.into(), start_bin as usize, count as usize)
 }
 
-/// Loud regions, best first. `params` defaults to [`SpikeParams::default`].
+/// Loud regions, best first. `params` defaults to [`SpikeParams::default`] and is clamped.
+/// The curves are cached per analysis, so only window changes recompute them.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_spikes(
@@ -253,7 +257,97 @@ pub async fn get_spikes(
     params: Option<SpikeParams>,
 ) -> AppResult<Vec<Spike>> {
     let a = loaded(&app, &state, &id).await?;
-    blocking(move || Ok(spikes::detect(a.pyramid.level0(), &params.unwrap_or_default()))).await
+    let p = params.unwrap_or_default().clamped();
+    blocking(move || {
+        let t = std::time::Instant::now();
+        let c = a.curves_for(p.short_ms, p.baseline_s);
+        let t_curves = t.elapsed();
+        let t = std::time::Instant::now();
+        let found = spikes::regions(&c, &p);
+        log::debug!("get_spikes: curves {t_curves:?}, regions {:?}", t.elapsed());
+        Ok(found)
+    })
+    .await
+}
+
+/// `[min, max]*` of the loudness above the baseline (dB) for `count` bins of `level`, from the
+/// curves of the last `get_spikes` call (or the default windows).
+#[tauri::command]
+#[specta::specta]
+pub async fn get_loudness(
+    app: AppHandle,
+    state: State<'_, MediaState>,
+    id: String,
+    level: u8,
+    start_bin: u32,
+    count: u32,
+) -> AppResult<Samples> {
+    let a = loaded(&app, &state, &id).await?;
+    blocking(move || {
+        let c = a.cached_curves().unwrap_or_else(|| {
+            let d = SpikeParams::default();
+            a.curves_for(d.short_ms, d.baseline_s)
+        });
+        Ok(Samples(spikes::loudness_slice(&c, level.into(), start_bin as usize, count as usize)))
+    })
+    .await
+}
+
+// --- spike presets (M6) ---------------------------------------------------------------------------
+
+const SPIKE_DEFAULTS_KEY: &str = "spikeDefaults";
+const SPIKE_PRESETS_KEY: &str = "spikePresets";
+
+/// Raw JSON values, so presets from other versions still load (`spikes::params_from_json`).
+type SpikePresets = HashMap<String, serde_json::Value>;
+
+fn spike_defaults(app: &AppHandle) -> Option<SpikeParams> {
+    read_setting(app, SPIKE_DEFAULTS_KEY).and_then(spikes::params_from_json)
+}
+
+/// The game's preset, else the user's defaults, else the built-in values.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_spike_params(app: AppHandle, app_id: u32) -> AppResult<SpikeParams> {
+    let preset = read_setting::<SpikePresets>(&app, SPIKE_PRESETS_KEY)
+        .and_then(|mut m| m.remove(&app_id.to_string()))
+        .and_then(spikes::params_from_json);
+    Ok(spikes::resolve_spike_params(preset, spike_defaults(&app)))
+}
+
+/// `None` removes the game's preset, so it follows the defaults again.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_spike_params(app: AppHandle, app_id: u32, params: Option<SpikeParams>) -> AppResult<()> {
+    let mut presets = read_setting::<SpikePresets>(&app, SPIKE_PRESETS_KEY).unwrap_or_default();
+    match params {
+        Some(p) => presets.insert(
+            app_id.to_string(),
+            serde_json::to_value(p.clamped()).map_err(|e| AppError::Store(e.to_string()))?,
+        ),
+        None => presets.remove(&app_id.to_string()),
+    };
+    write_setting(&app, SPIKE_PRESETS_KEY, (!presets.is_empty()).then_some(presets))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_spike_defaults(app: AppHandle) -> AppResult<SpikeParams> {
+    Ok(spikes::resolve_spike_params(None, spike_defaults(&app)))
+}
+
+/// `None` returns to the built-in defaults.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_spike_defaults(app: AppHandle, params: Option<SpikeParams>) -> AppResult<()> {
+    write_setting(&app, SPIKE_DEFAULTS_KEY, params.map(|p| p.clamped()))
+}
+
+/// Removes every game's preset.
+#[tauri::command]
+#[specta::specta]
+pub async fn clear_spike_presets(app: AppHandle) -> AppResult<()> {
+    write_setting::<SpikePresets>(&app, SPIKE_PRESETS_KEY, None)
 }
 
 #[tauri::command]
@@ -512,8 +606,14 @@ fn snap(detail: &SessionDetail, in_s: f64, out_s: f64) -> AppResult<Snap> {
     export::chunk_range(&detail.chunks, seg, in_s, out_s, is_live(detail), detail.summary.size_bytes)
 }
 
-/// The account's `ExportDirectory`, else the system video folder, else `~/Videos`.
+const EXPORT_DIR_KEY: &str = "exportDirOverride";
+
+/// The override from the settings, else the account's `ExportDirectory`, else the system video
+/// folder, else `~/Videos`.
 fn export_dir(app: &AppHandle, account_id: &str) -> AppResult<PathBuf> {
+    if let Some(d) = read_path_setting(app, EXPORT_DIR_KEY)? {
+        return Ok(d);
+    }
     let info = discover(app)?;
     if let Some(d) = info.accounts.into_iter().find(|a| a.account_id == account_id).and_then(|a| a.export_dir) {
         return Ok(d);
@@ -616,6 +716,19 @@ pub async fn export_clip(
         if done.fell_back { " (software fallback)" } else { "" },
         started.elapsed()
     );
+    let recent = RecentExport {
+        path: out.clone(),
+        game_name: detail.summary.game_name.clone(),
+        in_s: actual_in_s,
+        out_s: actual_out_s,
+        mode: if exact { ExportModeKind::Precise } else { ExportModeKind::Fast },
+        size_bytes: done.size_bytes,
+        finished_at: chrono::Local::now().to_rfc3339(),
+    };
+    let list = read_setting::<Vec<RecentExport>>(&app, RECENT_EXPORTS_KEY).unwrap_or_default();
+    if let Err(e) = write_setting(&app, RECENT_EXPORTS_KEY, Some(export::push_recent(list, recent))) {
+        log::warn!("could not store the recent exports: {e}");
+    }
     Ok(ExportResult {
         path: out,
         actual_in_s,
@@ -660,4 +773,143 @@ pub async fn get_export_prefs(app: AppHandle) -> AppResult<ExportPrefs> {
 pub async fn set_export_prefs(app: AppHandle, prefs: ExportPrefs) -> AppResult<()> {
     write_setting(&app, EXPORT_MODE_KEY, prefs.mode)?;
     write_setting(&app, EXPORT_PRECISE_KEY, prefs.precise)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_export_dir_override(app: AppHandle) -> AppResult<Option<PathBuf>> {
+    read_path_setting(&app, EXPORT_DIR_KEY)
+}
+
+/// `None` returns to the account's Steam export folder.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_export_dir_override(app: AppHandle, path: Option<PathBuf>) -> AppResult<()> {
+    if let Some(p) = &path
+        && !p.is_dir()
+    {
+        return Err(AppError::NotFound(format!("{} is not a folder", p.display())));
+    }
+    write_setting(&app, EXPORT_DIR_KEY, path.map(|p| p.to_string_lossy().into_owned()))
+}
+
+const RECENT_EXPORTS_KEY: &str = "recentExports";
+
+/// Newest first, with whether each file still exists.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_recent_exports(app: AppHandle) -> AppResult<Vec<RecentEntry>> {
+    let list = read_setting::<Vec<RecentExport>>(&app, RECENT_EXPORTS_KEY).unwrap_or_default();
+    blocking(move || Ok(list.into_iter().map(|entry| RecentEntry { exists: entry.path.is_file(), entry }).collect())).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_recent_export(app: AppHandle, path: PathBuf) -> AppResult<()> {
+    let mut list = read_setting::<Vec<RecentExport>>(&app, RECENT_EXPORTS_KEY).unwrap_or_default();
+    list.retain(|e| e.path != path);
+    write_setting(&app, RECENT_EXPORTS_KEY, Some(list))
+}
+
+// --- caches (M6) ----------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheSizes {
+    #[specta(type = specta_typescript::Number)]
+    pub waveform: u64,
+    #[specta(type = specta_typescript::Number)]
+    pub preview: u64,
+    #[specta(type = specta_typescript::Number)]
+    pub export: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ClearResult {
+    /// Files or job folders that could not be removed because they are in use.
+    pub skipped: u32,
+}
+
+/// Total size of the files below `dir`; 0 if it does not exist.
+fn dir_size(dir: &Path) -> u64 {
+    let Ok(rd) = std::fs::read_dir(dir) else { return 0 };
+    rd.flatten()
+        .map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => dir_size(&e.path()),
+            Ok(_) => e.metadata().map_or(0, |m| m.len()),
+            Err(_) => 0,
+        })
+        .sum()
+}
+
+/// Removes everything below `dir` except the entries `keep` returns true for, file by file.
+/// Returns the number of files that could not be removed (in use on Windows).
+fn remove_contents(dir: &Path, keep: &dyn Fn(&std::ffi::OsStr) -> bool) -> u32 {
+    let Ok(rd) = std::fs::read_dir(dir) else { return 0 };
+    let mut skipped = 0;
+    for e in rd.flatten() {
+        if keep(&e.file_name()) {
+            continue;
+        }
+        let path = e.path();
+        if e.file_type().is_ok_and(|t| t.is_dir()) {
+            skipped += remove_contents(&path, &|_| false);
+            let _ = std::fs::remove_dir(&path);
+        } else if let Err(err) = std::fs::remove_file(&path) {
+            log::info!("could not remove {}: {err}", path.display());
+            skipped += 1;
+        }
+    }
+    skipped
+}
+
+fn cache_root(app: &AppHandle) -> AppResult<PathBuf> {
+    let dir = app.path().app_cache_dir().map_err(|e| AppError::Io(format!("no cache folder: {e}")))?;
+    Ok(dir.join("steamreplay"))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_cache_sizes(app: AppHandle) -> AppResult<CacheSizes> {
+    let root = cache_root(&app)?;
+    blocking(move || {
+        Ok(CacheSizes {
+            waveform: dir_size(&root.join("waveform")),
+            preview: dir_size(&root.join("preview")),
+            export: dir_size(&root.join("export")),
+        })
+    })
+    .await
+}
+
+/// Deletes the waveform, preview and export caches and forgets the loaded analyses. Files of
+/// running preview transcodes and exports are left alone.
+#[tauri::command]
+#[specta::specta]
+pub async fn clear_caches(
+    app: AppHandle,
+    state: State<'_, MediaState>,
+    preview: State<'_, PreviewState>,
+) -> AppResult<ClearResult> {
+    let root = cache_root(&app)?;
+    let running = state.running_jobs();
+    let cache = preview.cache.clone();
+    let skipped = blocking(move || {
+        let mut skipped = remove_contents(&root.join("waveform"), &|_| false);
+        cache.clear();
+        // `tmp` holds the files of running transcodes.
+        skipped += remove_contents(&cache.root, &|n| n == "tmp");
+        let export = root.join("export");
+        let busy = |n: &std::ffi::OsStr| n.to_str().is_some_and(|n| running.contains(n));
+        if let Ok(rd) = std::fs::read_dir(&export) {
+            skipped += rd.flatten().filter(|e| busy(&e.file_name())).count() as u32;
+        }
+        skipped += remove_contents(&export, &busy);
+        Ok(skipped)
+    })
+    .await?;
+    state.clear_loaded();
+    log::info!("caches cleared, {skipped} entries in use");
+    Ok(ClearResult { skipped })
 }

@@ -4,6 +4,9 @@ import { errorMessage, unwrap } from "./lib/ipc";
 import { SessionList } from "./components/SessionList";
 import { SessionDetails } from "./components/SessionDetails";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { ShortcutsOverlay } from "./components/ShortcutsOverlay";
+import { dialogOpen, isTyping } from "./lib/keys";
+import { useView } from "./state/view";
 import { Toasts, type Toast } from "./components/Toasts";
 import "./App.css";
 
@@ -14,6 +17,7 @@ export default function App() {
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextToast = useRef(0);
 
@@ -42,6 +46,17 @@ export default function App() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // `?` shows the shortcuts. Matched by `e.key`, so Shift+ß on a German layout works too.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "?" || e.ctrlKey || e.altKey || e.metaKey || isTyping(e.target) || dialogOpen()) return;
+      e.preventDefault();
+      setShortcutsOpen(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -111,11 +126,20 @@ export default function App() {
       {settingsOpen && (
         <SettingsDialog
           info={info}
-          onClose={() => setSettingsOpen(false)}
+          onClose={() => {
+            setSettingsOpen(false);
+            useView.getState().bumpSettings();
+          }}
           onChanged={refresh}
+          onShowShortcuts={() => {
+            setSettingsOpen(false);
+            useView.getState().bumpSettings();
+            setShortcutsOpen(true);
+          }}
           onError={showError}
         />
       )}
+      {shortcutsOpen && <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />}
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
     </div>
   );

@@ -48,6 +48,15 @@ pub fn detect(level0, p) -> Vec<Spike> { regions(&curves(level0, p.short_ms, p.b
 - `Analysis` (`media/mod.rs:34`) gets `curves: Mutex<Option<((u32, u32), Arc<Curves>)>>`, keyed by `(short_ms, baseline_ms)`. `get_spikes` reuses the curves when the key matches. Changing the threshold, min length, merge gap or pad then only runs `regions`.
 - Run `get_spikes` in `spawn_blocking`, so a 1 h baseline rebuild does not block the async runtime.
 - Measure `curves` and `regions` on the 1 h sample (about 372 k bins). If dragging the baseline slider takes longer than 200 ms, recompute only when the slider is released (`onChange` commit), and say so in the UI.
+- **Measured** (release build, `bg_1445790_20261015_210120`, 372 000 bins):
+
+  | Baseline | `curves` | `regions` |
+  |---|---|---|
+  | 5 s | 24 ms | 0.40 ms |
+  | 30 s | 23 ms | 0.45 ms |
+  | 120 s | 23 ms | 0.45 ms |
+
+  The sliding-histogram median does not depend on the window length. **Decided:** every slider, the baseline included, updates live, so no apply-on-release fallback is needed. A "recalculating…" note shows while a request runs.
 
 ### 4.3 Presets (backend)
 - Store keys in `settings.json` (`read_setting`/`write_setting`, `commands.rs:311-327`):
@@ -76,7 +85,7 @@ pub fn detect(level0, p) -> Vec<Spike> { regions(&curves(level0, p.short_ms, p.b
 | `merge_gap_s` | 0–20 s | 0.5 |
 | `pad_s` | 0–5 s | 0.25 |
 
-- A change calls `getSpikes(id, params)` after a 150 ms debounce. Responses that arrive out of order are dropped with a request counter. Then the spike bands and the list are redrawn.
+- A change calls `getSpikes(id, params)`, throttled to one request every 150 ms with the last value always sent. A trailing debounce would not update while the slider is being dragged. Responses that arrive out of order are dropped with a request counter. Then the spike bands and the list are redrawn.
 - On session load, call `getSpikeParams(appId)`. Save with `setSpikeParams` 1 s after the last change. "Reset" calls `setSpikeParams(appId, null)` and reloads.
 - The panel shows the spike count, for example "37 loud parts".
 - **Optional loudness lane** (do it last, skip it if time is short):
@@ -116,7 +125,7 @@ Today it has: recordings folder override, ffmpeg, video preview (`PreviewSection
 - In `ExportPanel.tsx`, a collapsible "Recent exports" list under the job list, with "Show in folder" and "Copy path" (pull the buttons out of `JobRow`, `ExportPanel.tsx:450`, into a shared `PathActions`). Entries whose file no longer exists are shown greyed out, with a "Remove" action. The backend sets `exists`, because there is no fs plugin in `capabilities/default.json`; do not add one.
 
 ## 5. Edge cases
-- A preset saved by an older version that has missing or extra fields: `#[serde(default)]` on `SpikeParams`, so missing fields fall back to the defaults.
+- A preset saved by an older version that has missing or extra fields: the stored JSON is merged over the defaults (`spikes::params_from_json`). `#[serde(default)]` is not used, because it would make every field optional in the generated TS type.
 - Slider values outside the valid range (a hand-edited store): clamp them in `get_spike_params`.
 - A session with no audio analysis yet: the tuning panel is disabled until `analyze_audio` has finished.
 - `max_results` is reached: the panel shows "showing top 200".

@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Channel } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
   commands,
   type ExportMode,
@@ -11,12 +9,13 @@ import {
   type ExportResult,
   type PreciseOpts,
   type Progress,
+  type RecentEntry,
   type Snap,
   type StreamInfo,
   type VideoCodec,
 } from "../bindings";
 import { IpcError, errorMessage, unwrap } from "../lib/ipc";
-import { formatBytes, formatTimecode } from "../lib/format";
+import { formatBytes, formatDateTime, formatTimecode } from "../lib/format";
 import {
   CODEC_LABELS,
   MIN_VIDEO_KBPS,
@@ -26,8 +25,9 @@ import {
   presetLabel,
   videoKbps,
 } from "../lib/exportPresets";
-import { isTyping } from "../lib/keys";
+import { dialogOpen, isTyping } from "../lib/keys";
 import { useView } from "../state/view";
+import { PathActions } from "./PathActions";
 
 type Props = { id: string; video: StreamInfo | null; onError: (e: unknown) => void };
 
@@ -61,11 +61,12 @@ const TOOLTIPS: Record<ExportModeKind, string> = {
   precise: "Exact cut on the chosen frames, re-encoded. Plays everywhere with H.264.",
 };
 
-/** `I`/`O` set in/out at the playhead, `Esc` clears the selection, `Ctrl+L` toggles loop. */
+/** `I`/`O` set in/out at the playhead, `Esc` clears the selection, `Ctrl+L` toggles loop.
+ * Listed in `SHORTCUTS` (lib/keys.ts). */
 function useSelectionKeys() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.altKey || e.metaKey || isTyping(e.target) || document.querySelector("dialog[open]")) return;
+      if (e.altKey || e.metaKey || isTyping(e.target) || dialogOpen()) return;
       const view = useView.getState();
       const key = e.key.toLowerCase();
       if (e.ctrlKey) {
@@ -96,6 +97,7 @@ export function ExportPanel({ id, video, onError }: Props) {
   const outS = useView((s) => s.outS);
   const loop = useView((s) => s.loop);
   const mode = useView((s) => s.exportMode);
+  const settingsSeq = useView((s) => s.settingsSeq);
   const [preset, setPreset] = useState<ExportPreset>("discord");
   const [opts, setOpts] = useState<PreciseOpts>(PRESETS.discord.opts);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
@@ -105,12 +107,14 @@ export function ExportPanel({ id, video, onError }: Props) {
   /** The user typed or browsed a path; stop replacing it with the default. */
   const [edited, setEdited] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
+  /** Bumped after each finished export, so the recent list reloads. */
+  const [recentSeq, setRecentSeq] = useState(0);
   const onErrorRef = useRef(onError);
   useEffect(() => {
     onErrorRef.current = onError;
   });
 
-  // The last used mode and precise options.
+  // The last used mode and precise options (again when the settings dialog may have changed them).
   useEffect(() => {
     let active = true;
     unwrap(commands.getExportPrefs())
@@ -127,7 +131,7 @@ export function ExportPanel({ id, video, onError }: Props) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [settingsSeq]);
 
   useEffect(() => {
     if (!prefsLoaded) return;
@@ -185,7 +189,10 @@ export function ExportPanel({ id, video, onError }: Props) {
     const progress = new Channel<Progress>();
     progress.onmessage = (p) => update({ kind: "running", fraction: p.fraction });
     unwrap(commands.exportClip({ id, inS: next.inS, outS: next.outS, output: next.output, mode: next.mode }, next.jobId, progress))
-      .then((result) => update({ kind: "done", result }))
+      .then((result) => {
+        update({ kind: "done", result });
+        setRecentSeq((n) => n + 1);
+      })
       .catch((e: unknown) => {
         if (e instanceof IpcError && e.kind === "cancelled") {
           update({ kind: "cancelled" });
@@ -345,6 +352,7 @@ export function ExportPanel({ id, video, onError }: Props) {
           ))}
         </ul>
       )}
+      <RecentExports seq={recentSeq} onError={onError} />
     </div>
   );
 }
@@ -477,16 +485,67 @@ function JobRow({ job, onError }: { job: Job; onError: (e: unknown) => void }) {
               software fallback
             </span>
           )}
-          <button type="button" onClick={() => revealItemInDir(s.result.path).catch(onError)}>
-            Show in folder
-          </button>
-          <button type="button" onClick={() => writeText(s.result.path).catch(onError)}>
-            Copy path
-          </button>
+          <PathActions path={s.result.path} onError={onError} />
         </>
       )}
       {s.kind === "failed" && <span className="warn">Failed: {s.message}</span>}
       {s.kind === "cancelled" && <span className="muted">Cancelled</span>}
     </li>
+  );
+}
+
+/** The last exports of any session, kept across restarts. Missing files are greyed out. */
+function RecentExports({ seq, onError }: { seq: number; onError: (e: unknown) => void }) {
+  const [entries, setEntries] = useState<RecentEntry[] | null>(null);
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    unwrap(commands.getRecentExports())
+      .then((e) => active && setEntries(e))
+      .catch((e: unknown) => console.warn("recent exports", e));
+    return () => {
+      active = false;
+    };
+  }, [seq, reload]);
+
+  if (!entries?.length) return null;
+
+  const remove = async (path: string) => {
+    try {
+      await unwrap(commands.removeRecentExport(path));
+      setReload((n) => n + 1);
+    } catch (e) {
+      onError(e);
+    }
+  };
+
+  return (
+    <details className="recent-exports">
+      <summary>Recent exports ({entries.length})</summary>
+      <ul className="export-jobs">
+        {entries.map(({ entry: e, exists }) => (
+          <li key={e.path} className={exists ? undefined : "muted"} title={exists ? undefined : "The file is gone or its drive is not connected"}>
+            <span>{e.gameName}</span>
+            <span className="mono">
+              {formatTimecode(e.inS)} – {formatTimecode(e.outS)}
+            </span>
+            <span className="muted">
+              {e.mode === "fast" ? "Fast" : "Precise"} · {formatBytes(e.sizeBytes)} · {formatDateTime(e.finishedAt)}
+            </span>
+            <span className="mono export-file" title={e.path}>
+              {e.path}
+            </span>
+            {exists ? (
+              <PathActions path={e.path} onError={onError} />
+            ) : (
+              <button type="button" onClick={() => void remove(e.path)}>
+                Remove
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

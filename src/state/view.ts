@@ -27,6 +27,10 @@ type ViewState = {
   loop: boolean;
   /** Fast cuts at chunk boundaries (the timeline draws them), Precise on the exact frames. Kept across sessions. */
   exportMode: ExportModeKind;
+  /** Bumped when the settings dialog closes; panels reload what it may have changed. */
+  settingsSeq: number;
+  /** Bumped after the caches were cleared; the open session analyses again. */
+  cacheSeq: number;
   /** Shows the whole session and puts the playhead at 0. */
   reset: (durationS: number) => void;
   /** Moves the playhead without moving the video (used by the video itself). */
@@ -47,6 +51,8 @@ type ViewState = {
   clearSelection: () => void;
   setLoop: (loop: boolean) => void;
   setExportMode: (mode: ExportModeKind) => void;
+  bumpSettings: () => void;
+  bumpCache: () => void;
 };
 
 function clampView(start: number, end: number, duration: number): [number, number] {
@@ -74,6 +80,8 @@ export const useView = create<ViewState>((set) => ({
   outS: null,
   loop: false,
   exportMode: "fast",
+  settingsSeq: 0,
+  cacheSeq: 0,
   reset: (durationS) =>
     set({
       durationS,
@@ -108,6 +116,8 @@ export const useView = create<ViewState>((set) => ({
   clearSelection: () => set({ inS: null, outS: null }),
   setLoop: (loop) => set({ loop }),
   setExportMode: (exportMode) => set({ exportMode }),
+  bumpSettings: () => set((st) => ({ settingsSeq: st.settingsSeq + 1 })),
+  bumpCache: () => set((st) => ({ cacheSeq: st.cacheSeq + 1 })),
 }));
 
 function selection(a: number, b: number, duration: number) {

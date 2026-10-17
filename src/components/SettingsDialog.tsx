@@ -1,9 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { commands, type Backend, type DiscoveryInfo, type FfmpegPaths, type PreviewSettings } from "../bindings";
+import {
+  commands,
+  type Backend,
+  type CacheSizes,
+  type DiscoveryInfo,
+  type ExportPreset,
+  type ExportPrefs,
+  type FfmpegPaths,
+  type PreviewSettings,
+  type SpikeParams,
+} from "../bindings";
+import { PRESETS, PRESET_ORDER, presetLabel } from "../lib/exportPresets";
 import { formatBytes } from "../lib/format";
 import { errorMessage, unwrap } from "../lib/ipc";
+import { sensitivityToThreshold, thresholdToSensitivity } from "../lib/spikeTuning";
+import { useView } from "../state/view";
 
 const BACKEND_NAMES: Record<Backend, string> = {
   cuda: "NVIDIA (CUDA / NVENC)",
@@ -18,10 +31,11 @@ type Props = {
   info: DiscoveryInfo | null;
   onClose: () => void;
   onChanged: () => void;
+  onShowShortcuts: () => void;
   onError: (e: unknown) => void;
 };
 
-export function SettingsDialog({ info, onClose, onChanged, onError }: Props) {
+export function SettingsDialog({ info, onClose, onChanged, onShowShortcuts, onError }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const [copied, setCopied] = useState(false);
   const [ffmpeg, setFfmpeg] = useState<FfmpegPaths | string | null>(null);
@@ -84,6 +98,15 @@ export function SettingsDialog({ info, onClose, onChanged, onError }: Props) {
         )}
       </div>
 
+      <h3>Export</h3>
+      <ExportSection onError={onError} />
+
+      <h3>Loud parts</h3>
+      <SpikeSection onError={onError} />
+
+      <h3>Video preview</h3>
+      <PreviewSection onError={onError} />
+
       <h3>ffmpeg</h3>
       {ffmpeg === null ? (
         <p className="muted">Checking…</p>
@@ -107,10 +130,11 @@ export function SettingsDialog({ info, onClose, onChanged, onError }: Props) {
         )}
       </div>
 
-      <h3>Video preview</h3>
-      <PreviewSection onError={onError} />
+      <h3>Storage</h3>
+      <StorageSection onError={onError} />
 
-      <h3>Detected Steam folders</h3>
+      <h3>Diagnostics</h3>
+      <p className="muted">Detected Steam folders</p>
       <ul className="checks">
         {info?.checkedRoots.map((c) => (
           <li key={c.path} className={c.exists ? "ok" : "muted"}>
@@ -119,8 +143,7 @@ export function SettingsDialog({ info, onClose, onChanged, onError }: Props) {
           </li>
         ))}
       </ul>
-
-      <h3>Accounts</h3>
+      <p className="muted">Accounts</p>
       {info?.accounts.length ? (
         <ul className="checks">
           {info.accounts.map((a) => (
@@ -137,12 +160,209 @@ export function SettingsDialog({ info, onClose, onChanged, onError }: Props) {
         <button type="button" onClick={copyDiagnostics}>
           {copied ? "Copied ✓" : "Copy diagnostics"}
         </button>
+        <button type="button" onClick={onShowShortcuts} title="?">
+          Keyboard shortcuts
+        </button>
         <span className="spacer" />
         <button type="button" onClick={() => ref.current?.close()}>
           Close
         </button>
       </div>
     </dialog>
+  );
+}
+
+/** Default export folder, and the mode and preset the next export starts with. */
+function ExportSection({ onError }: { onError: (e: unknown) => void }) {
+  const [dir, setDir] = useState<string | null | undefined>(undefined);
+  const [prefs, setPrefs] = useState<ExportPrefs | null>(null);
+
+  useEffect(() => {
+    unwrap(commands.getExportDirOverride()).then(setDir, onError);
+    unwrap(commands.getExportPrefs()).then(setPrefs, onError);
+  }, [onError]);
+
+  const saveDir = async (path: string | null) => {
+    try {
+      await unwrap(commands.setExportDirOverride(path));
+      setDir(path);
+    } catch (e) {
+      onError(e);
+    }
+  };
+
+  const pickDir = async () => {
+    const chosen = await open({ directory: true, title: "Choose the export folder" });
+    if (typeof chosen === "string") await saveDir(chosen);
+  };
+
+  const savePrefs = async (p: ExportPrefs) => {
+    setPrefs(p);
+    try {
+      await unwrap(commands.setExportPrefs(p));
+    } catch (e) {
+      onError(e);
+    }
+  };
+
+  const mode = prefs?.mode ?? "fast";
+  const preset = prefs?.precise?.preset ?? "discord";
+  const choosePreset = (p: ExportPreset) => {
+    if (!prefs) return;
+    const opts = p === "custom" ? (prefs.precise?.opts ?? PRESETS.discord.opts) : PRESETS[p].opts;
+    void savePrefs({ ...prefs, precise: { preset: p, opts } });
+  };
+
+  return (
+    <>
+      <p>
+        Folder: <span className="mono">{dir ?? "Steam's export folder (automatic)"}</span>
+      </p>
+      <div className="buttons">
+        <button type="button" onClick={() => void pickDir()}>
+          Choose folder…
+        </button>
+        {dir && (
+          <button type="button" onClick={() => void saveDir(null)}>
+            Use Steam's folder
+          </button>
+        )}
+      </div>
+      {prefs && (
+        <div className="buttons">
+          <span>Next export</span>
+          <div className="segmented" role="group" aria-label="Export mode">
+            {(["fast", "precise"] as const).map((m) => (
+              <button key={m} type="button" aria-pressed={mode === m} onClick={() => void savePrefs({ ...prefs, mode: m })}>
+                {m === "fast" ? "Fast" : "Precise"}
+              </button>
+            ))}
+          </div>
+          <select
+            value={preset}
+            disabled={mode !== "precise"}
+            onChange={(e) => choosePreset(e.target.value as ExportPreset)}
+            aria-label="Preset"
+          >
+            {PRESET_ORDER.map((p) => (
+              <option key={p} value={p}>
+                {presetLabel(p)}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      <p className="muted">The export panel remembers the last choice; this edits the same setting.</p>
+    </>
+  );
+}
+
+/** Default sensitivity for games without their own tuning, and resetting the game presets. */
+function SpikeSection({ onError }: { onError: (e: unknown) => void }) {
+  const [defaults, setDefaults] = useState<SpikeParams | null>(null);
+  const [cleared, setCleared] = useState(false);
+
+  useEffect(() => {
+    unwrap(commands.getSpikeDefaults()).then(setDefaults, onError);
+  }, [onError]);
+
+  const save = async (p: SpikeParams | null) => {
+    try {
+      await unwrap(commands.setSpikeDefaults(p));
+      setDefaults(await unwrap(commands.getSpikeDefaults()));
+    } catch (e) {
+      onError(e);
+    }
+  };
+
+  const clearPresets = async () => {
+    try {
+      await unwrap(commands.clearSpikePresets());
+      setCleared(true);
+    } catch (e) {
+      onError(e);
+    }
+  };
+
+  if (!defaults) return <p className="muted">Loading…</p>;
+  const sensitivity = Math.round(thresholdToSensitivity(defaults.thresholdDb));
+  return (
+    <>
+      <div className="buttons">
+        <label className="spike-slider">
+          <span>Default sensitivity</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={sensitivity}
+            onChange={(e) => setDefaults({ ...defaults, thresholdDb: sensitivityToThreshold(Number(e.target.value)) })}
+            onPointerUp={() => void save(defaults)}
+            onKeyUp={() => void save(defaults)}
+          />
+          <span className="mono">
+            {sensitivity} <span className="muted">({defaults.thresholdDb.toFixed(1)} dB)</span>
+          </span>
+        </label>
+        <button type="button" onClick={() => void save(null)}>
+          Built-in defaults
+        </button>
+      </div>
+      <div className="buttons">
+        <button type="button" onClick={() => void clearPresets()} disabled={cleared}>
+          {cleared ? "Game presets reset ✓" : "Reset all game presets"}
+        </button>
+      </div>
+      <p className="muted">Games you tuned keep their own values until you reset them.</p>
+    </>
+  );
+}
+
+/** Cache sizes and one button to clear them all. */
+function StorageSection({ onError }: { onError: (e: unknown) => void }) {
+  const [sizes, setSizes] = useState<CacheSizes | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
+
+  const reload = useCallback(() => unwrap(commands.getCacheSizes()).then(setSizes, onError), [onError]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const clear = async () => {
+    setClearing(true);
+    try {
+      const r = await unwrap(commands.clearCaches());
+      setMessage(r.skipped > 0 ? "Cleared. Some files were in use and were kept." : "Cleared.");
+      useView.getState().bumpCache();
+    } catch (e) {
+      onError(e);
+    } finally {
+      setClearing(false);
+      await reload();
+    }
+  };
+
+  return (
+    <>
+      {sizes ? (
+        <p>
+          Waveforms {formatBytes(sizes.waveform)} · Preview {formatBytes(sizes.preview)} · Export temp{" "}
+          {formatBytes(sizes.export)}
+        </p>
+      ) : (
+        <p className="muted">Measuring…</p>
+      )}
+      <div className="buttons">
+        <button type="button" onClick={() => void clear()} disabled={clearing}>
+          {clearing ? "Clearing…" : "Clear caches"}
+        </button>
+        {message && <span className="muted">{message}</span>}
+      </div>
+      <p className="muted">Waveforms and previews are rebuilt when a recording is opened again.</p>
+    </>
   );
 }
 /** Preview backend and cache size. */
@@ -170,15 +390,6 @@ function PreviewSection({ onError }: { onError: (e: unknown) => void }) {
   const save = async (backend: Backend | null, mb: number) => {
     try {
       await unwrap(commands.setPreviewSettings(backend, mb));
-      await reload();
-    } catch (e) {
-      onError(e);
-    }
-  };
-
-  const clear = async () => {
-    try {
-      await unwrap(commands.clearPreviewCache());
       await reload();
     } catch (e) {
       onError(e);
@@ -218,9 +429,6 @@ function PreviewSection({ onError }: { onError: (e: unknown) => void }) {
           Apply
         </button>
         <span className="muted">{formatBytes(settings.cacheBytes)} used</span>
-        <button type="button" onClick={clear}>
-          Clear cache
-        </button>
       </div>
     </>
   );

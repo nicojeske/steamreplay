@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Spike } from "../bindings";
 import { formatTimecode } from "../lib/format";
-import { isTyping } from "../lib/keys";
+import { dialogOpen, isTyping } from "../lib/keys";
 import { useView, zoomToRange } from "../state/view";
 
 type Props = { spikes: Spike[] };
@@ -26,9 +26,10 @@ export function SpikeList({ spikes }: Props) {
   const selected = useView((s) => s.selectedSpike);
   const listRef = useRef<HTMLTableSectionElement>(null);
 
+  // Listed in `SHORTCUTS` (lib/keys.ts).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.altKey || e.metaKey || isTyping(e.target) || spikes.length === 0) return;
+      if (e.ctrlKey || e.altKey || e.metaKey || isTyping(e.target) || dialogOpen() || spikes.length === 0) return;
       const key = e.key.toLowerCase();
       if (key === "s" && !e.shiftKey) {
         const i = useView.getState().selectedSpike;

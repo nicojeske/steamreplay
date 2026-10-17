@@ -32,6 +32,18 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::get_export_capabilities,
         commands::get_export_prefs,
         commands::set_export_prefs,
+        commands::get_loudness,
+        commands::get_spike_params,
+        commands::set_spike_params,
+        commands::get_spike_defaults,
+        commands::set_spike_defaults,
+        commands::clear_spike_presets,
+        commands::get_export_dir_override,
+        commands::set_export_dir_override,
+        commands::get_recent_exports,
+        commands::remove_recent_export,
+        commands::get_cache_sizes,
+        commands::clear_caches,
     ])
 }
 

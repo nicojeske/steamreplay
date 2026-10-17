@@ -9,7 +9,7 @@ pub mod ffmpeg;
 pub mod pyramid;
 pub mod spikes;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 use audio::{BIN_MS, Bin, Gap};
 use ffmpeg::{FfmpegPaths, ProgressFn};
 use pyramid::{FACTOR, Pyramid};
+use spikes::Curves;
 
 use crate::error::{AppError, AppResult};
 use crate::steam::recordings::SessionDetail;
@@ -37,7 +38,12 @@ pub struct Analysis {
     pub gaps: Vec<Gap>,
     pub first: u32,
     pub last: u32,
+    /// The spike curves of the last `(short_ms, baseline_ms)`, so threshold changes skip them.
+    curves: Mutex<Option<CachedCurves>>,
 }
+
+/// `((short_ms, baseline_ms), curves)`.
+type CachedCurves = ((u32, u32), Arc<Curves>);
 
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -66,6 +72,29 @@ pub struct Progress {
 }
 
 impl Analysis {
+    pub fn new(pyramid: Pyramid, gaps: Vec<Gap>, first: u32, last: u32) -> Self {
+        Self { pyramid, gaps, first, last, curves: Mutex::new(None) }
+    }
+
+    /// The spike curves for these windows, computed once per key. Blocking.
+    pub fn curves_for(&self, short_ms: u32, baseline_s: f32) -> Arc<Curves> {
+        let key = (short_ms, (baseline_s * 1000.0).round() as u32);
+        let mut cached = self.curves.lock().expect("curves lock");
+        if let Some((k, c)) = cached.as_ref()
+            && *k == key
+        {
+            return c.clone();
+        }
+        let c = Arc::new(spikes::curves(self.pyramid.level0(), short_ms, baseline_s));
+        *cached = Some((key, c.clone()));
+        c
+    }
+
+    /// The cached curves, if any.
+    pub fn cached_curves(&self) -> Option<Arc<Curves>> {
+        self.curves.lock().expect("curves lock").as_ref().map(|(_, c)| c.clone())
+    }
+
     pub fn meta(&self) -> WaveformMeta {
         let mut bin_ms = u32::from(BIN_MS);
         let levels = self
@@ -156,6 +185,16 @@ impl MediaState {
         self.loaded.lock().expect("loaded lock").put(id.to_owned(), a);
     }
 
+    /// Forgets every loaded analysis (after the disk cache was cleared).
+    pub fn clear_loaded(&self) {
+        self.loaded.lock().expect("loaded lock").clear();
+    }
+
+    /// Ids of the jobs that are running now.
+    pub fn running_jobs(&self) -> HashSet<String> {
+        self.jobs.lock().expect("jobs lock").keys().cloned().collect()
+    }
+
     pub fn start_job(&self, id: &str) -> JobGuard<'_> {
         let token = CancellationToken::new();
         let previous = self.jobs.lock().expect("jobs lock").insert(id.to_owned(), token.clone());
@@ -186,7 +225,7 @@ pub fn cache_file(cache_dir: &Path, detail: &SessionDetail) -> PathBuf {
 }
 
 fn finish(detail: &SessionDetail, level0: Vec<Bin>, gaps: Vec<Gap>) -> Analysis {
-    Analysis { pyramid: Pyramid::build(level0), gaps, first: detail.chunks.first, last: detail.chunks.last }
+    Analysis::new(Pyramid::build(level0), gaps, detail.chunks.first, detail.chunks.last)
 }
 
 /// Loads the analysis from the disk cache. Blocking.
@@ -235,6 +274,19 @@ mod tests {
 
     /// Manual check on a real recording: `STEAMREPLAY_SESSION_DIR=<bg folder> cargo test --release
     /// real_session -- --ignored --nocapture`. Prints timings and the top spikes for listening.
+    #[test]
+    fn curves_cached_per_key() {
+        let level0: Vec<Bin> = (0..5000).map(|i| [-0.1, 0.1, 0.01 + (i % 100) as f32 * 1e-4]).collect();
+        let a = Analysis::new(Pyramid::build(level0), Vec::new(), 1, 10);
+        assert!(a.cached_curves().is_none());
+        let c1 = a.curves_for(250, 30.0);
+        assert!(Arc::ptr_eq(&c1, &a.curves_for(250, 30.0)));
+        let c2 = a.curves_for(250, 60.0);
+        assert!(!Arc::ptr_eq(&c1, &c2));
+        assert!(Arc::ptr_eq(&c2, &a.cached_curves().unwrap()));
+        assert_eq!(*c1, spikes::curves(a.pyramid.level0(), 250, 30.0));
+    }
+
     #[tokio::test]
     #[ignore]
     async fn real_session() {
@@ -255,6 +307,16 @@ mod tests {
         let t = Instant::now();
         let found = spikes::detect(p.level0(), &spikes::SpikeParams::default());
         let t_spikes = t.elapsed();
+        // M6: the two stages separately, for live tuning.
+        let def = spikes::SpikeParams::default();
+        for baseline_s in [5.0, 30.0, 120.0] {
+            let t = Instant::now();
+            let c = spikes::curves(p.level0(), def.short_ms, baseline_s);
+            let t_curves = t.elapsed();
+            let t = Instant::now();
+            let n = spikes::regions(&c, &def).len();
+            eprintln!("baseline {baseline_s} s: curves {t_curves:?}, regions {:?} ({n} spikes)", t.elapsed());
+        }
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("x.bin");
         pyramid::save(&path, p.level0()).unwrap();

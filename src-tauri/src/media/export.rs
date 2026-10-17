@@ -105,6 +105,45 @@ pub struct ExportPrefs {
     pub precise: Option<PrecisePrefs>,
 }
 
+/// Recent exports kept in the settings store.
+pub const RECENT_EXPORTS: usize = 20;
+
+/// A finished export, for the "Recent exports" list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentExport {
+    pub path: PathBuf,
+    pub game_name: String,
+    #[specta(type = specta_typescript::Number)]
+    pub in_s: f64,
+    #[specta(type = specta_typescript::Number)]
+    pub out_s: f64,
+    pub mode: ExportModeKind,
+    #[specta(type = specta_typescript::Number)]
+    pub size_bytes: u64,
+    /// RFC 3339 local time.
+    pub finished_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentEntry {
+    pub entry: RecentExport,
+    /// The file is still there (false also when its drive is not connected).
+    pub exists: bool,
+}
+
+/// Puts `entry` first, drops an older entry for the same file and keeps the newest
+/// [`RECENT_EXPORTS`].
+pub fn push_recent(list: Vec<RecentExport>, entry: RecentExport) -> Vec<RecentExport> {
+    let mut out = Vec::with_capacity(RECENT_EXPORTS);
+    let path = entry.path.clone();
+    out.push(entry);
+    out.extend(list.into_iter().filter(|e| e.path != path));
+    out.truncate(RECENT_EXPORTS);
+    out
+}
+
 /// The selection snapped to chunk boundaries.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -682,6 +721,31 @@ mod tests {
         assert_eq!(serde_json::to_string(&precise).unwrap(), json);
         let prefs: ExportPrefs = serde_json::from_str(r#"{"mode":"precise","precise":null}"#).unwrap();
         assert_eq!(prefs.mode, Some(ExportModeKind::Precise));
+    }
+
+    #[test]
+    fn recent_exports_newest_first_trimmed() {
+        let entry = |i: u32| RecentExport {
+            path: PathBuf::from(format!("clip{i}.mp4")),
+            game_name: "Game".into(),
+            in_s: 0.0,
+            out_s: 1.0,
+            mode: ExportModeKind::Fast,
+            size_bytes: 1,
+            finished_at: String::new(),
+        };
+        let mut list = Vec::new();
+        for i in 0..25 {
+            list = push_recent(list, entry(i));
+        }
+        assert_eq!(list.len(), RECENT_EXPORTS);
+        assert_eq!(list[0], entry(24));
+        assert_eq!(list[19], entry(5));
+        // Exporting to the same file again moves it to the front instead of duplicating it.
+        let list = push_recent(list, entry(10));
+        assert_eq!(list.len(), RECENT_EXPORTS);
+        assert_eq!(list[0], entry(10));
+        assert_eq!(list.iter().filter(|e| e.path == entry(10).path).count(), 1);
     }
 
     /// Needs ffmpeg/ffprobe on PATH and a real bg folder with at least 3 chunks:

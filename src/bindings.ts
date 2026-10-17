@@ -19,7 +19,10 @@ export const commands = {
 	analyzeAudio: (id: string, jobId: string, progress: Channel<Progress>) => typedError<WaveformMeta, AppError>(__TAURI_INVOKE("analyze_audio", { id, jobId, progress })),
 	/**  Flat `[min, max, rms]*` for `count` bins of `level` from `start_bin`. */
 	getWaveform: (id: string, level: number, startBin: number, count: number) => typedError<Samples, AppError>(__TAURI_INVOKE("get_waveform", { id, level, startBin, count })),
-	/**  Loud regions, best first. `params` defaults to [`SpikeParams::default`]. */
+	/**
+	 *  Loud regions, best first. `params` defaults to [`SpikeParams::default`] and is clamped.
+	 *  The curves are cached per analysis, so only window changes recompute them.
+	 */
 	getSpikes: (id: string, params: {
 	/**  Window of the short-term loudness mean. */
 	shortMs: number,
@@ -76,6 +79,54 @@ export const commands = {
 	/**  The last used export mode, preset and custom options. */
 	getExportPrefs: () => typedError<ExportPrefs, AppError>(__TAURI_INVOKE("get_export_prefs")),
 	setExportPrefs: (prefs: ExportPrefs) => typedError<null, AppError>(__TAURI_INVOKE("set_export_prefs", { prefs })),
+	/**
+	 *  `[min, max]*` of the loudness above the baseline (dB) for `count` bins of `level`, from the
+	 *  curves of the last `get_spikes` call (or the default windows).
+	 */
+	getLoudness: (id: string, level: number, startBin: number, count: number) => typedError<Samples, AppError>(__TAURI_INVOKE("get_loudness", { id, level, startBin, count })),
+	/**  The game's preset, else the user's defaults, else the built-in values. */
+	getSpikeParams: (appId: number) => typedError<SpikeParams, AppError>(__TAURI_INVOKE("get_spike_params", { appId })),
+	/**  `None` removes the game's preset, so it follows the defaults again. */
+	setSpikeParams: (appId: number, params: {
+	/**  Window of the short-term loudness mean. */
+	shortMs: number,
+	/**  Window of the rolling-median baseline. */
+	baselineS: number,
+	/**  How far above the baseline the short-term loudness must be. */
+	thresholdDb: number,
+	minLenMs: number,
+	mergeGapS: number,
+	padS: number,
+	maxResults: number,
+} | null) => typedError<null, AppError>(__TAURI_INVOKE("set_spike_params", { appId, params })),
+	getSpikeDefaults: () => typedError<SpikeParams, AppError>(__TAURI_INVOKE("get_spike_defaults")),
+	/**  `None` returns to the built-in defaults. */
+	setSpikeDefaults: (params: {
+	/**  Window of the short-term loudness mean. */
+	shortMs: number,
+	/**  Window of the rolling-median baseline. */
+	baselineS: number,
+	/**  How far above the baseline the short-term loudness must be. */
+	thresholdDb: number,
+	minLenMs: number,
+	mergeGapS: number,
+	padS: number,
+	maxResults: number,
+} | null) => typedError<null, AppError>(__TAURI_INVOKE("set_spike_defaults", { params })),
+	/**  Removes every game's preset. */
+	clearSpikePresets: () => typedError<null, AppError>(__TAURI_INVOKE("clear_spike_presets")),
+	getExportDirOverride: () => typedError<string | null, AppError>(__TAURI_INVOKE("get_export_dir_override")),
+	/**  `None` returns to the account's Steam export folder. */
+	setExportDirOverride: (path: string | null) => typedError<null, AppError>(__TAURI_INVOKE("set_export_dir_override", { path })),
+	/**  Newest first, with whether each file still exists. */
+	getRecentExports: () => typedError<RecentEntry[], AppError>(__TAURI_INVOKE("get_recent_exports")),
+	removeRecentExport: (path: string) => typedError<null, AppError>(__TAURI_INVOKE("remove_recent_export", { path })),
+	getCacheSizes: () => typedError<CacheSizes, AppError>(__TAURI_INVOKE("get_cache_sizes")),
+	/**
+	 *  Deletes the waveform, preview and export caches and forgets the loaded analyses. Files of
+	 *  running preview transcodes and exports are left alone.
+	 */
+	clearCaches: () => typedError<ClearResult, AppError>(__TAURI_INVOKE("clear_caches")),
 };
 
 /* Types */
@@ -101,12 +152,23 @@ export type Backend =
 /**  libx264. Works everywhere, but needs many CPU cores. */
 "software";
 
+export type CacheSizes = {
+	waveform: number,
+	preview: number,
+	export: number,
+};
+
 /**  Based on the video stream files that exist on disk. */
 export type ChunkInventory = {
 	first: number,
 	last: number,
 	count: number,
 	missing: number[],
+};
+
+export type ClearResult = {
+	/**  Files or job folders that could not be removed because they are in use. */
+	skipped: number,
 };
 
 export type DiscoveryInfo = {
@@ -244,6 +306,24 @@ export type Quality =
 { kind: "crf"; q: number } | 
 /**  Average bitrate chosen so the file stays below `mb` megabytes. */
 { kind: "maxSizeMb"; mb: number };
+
+export type RecentEntry = {
+	entry: RecentExport,
+	/**  The file is still there (false also when its drive is not connected). */
+	exists: boolean,
+};
+
+/**  A finished export, for the "Recent exports" list. */
+export type RecentExport = {
+	path: string,
+	gameName: string,
+	inS: number,
+	outS: number,
+	mode: ExportModeKind,
+	sizeBytes: number,
+	/**  RFC 3339 local time. */
+	finishedAt: string,
+};
 
 /**  A Steam root candidate and what was found there (for the empty state and diagnostics). */
 export type RootCheck = {
