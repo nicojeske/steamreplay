@@ -146,6 +146,18 @@ export const commands = {
 	setFireshareConfig: (url: string | null, token: string | null) => typedError<FireshareConfig, AppError>(__TAURI_INVOKE("set_fireshare_config", { url, token })),
 	/**  The user name of the stored token. */
 	fireshareCheck: () => typedError<string, AppError>(__TAURI_INVOKE("fireshare_check")),
+	/**
+	 *  Starts connecting to the server at `url` (M12) and stores the URL. The user approves
+	 *  `verification_url` in the browser; `fireshare_connect_wait` then collects the token.
+	 */
+	fireshareConnectStart: (url: string) => typedError<ConnectInfo, AppError>(__TAURI_INVOKE("fireshare_connect_start", { url })),
+	/**
+	 *  Waits for the approval of the started connection and stores the new token, replacing (and
+	 *  revoking) the old one. Returns the user name. `job_id` is for `cancel_job`.
+	 */
+	fireshareConnectWait: (jobId: string) => typedError<string, AppError>(__TAURI_INVOKE("fireshare_connect_wait", { jobId })),
+	/**  Deletes the token on the server (best effort) and forgets it. The URL stays. */
+	fireshareDisconnect: () => typedError<FireshareConfig, AppError>(__TAURI_INVOKE("fireshare_disconnect")),
 	fireshareOptions: () => typedError<FireshareOptions, AppError>(__TAURI_INVOKE("fireshare_options")),
 	/**  The Fireshare game last chosen for this Steam game. */
 	getFireshareGame: (steamGame: string) => typedError<number | null, AppError>(__TAURI_INVOKE("get_fireshare_game", { steamGame })),
@@ -195,6 +207,12 @@ export type ChunkInventory = {
 export type ClearResult = {
 	/**  Files or job folders that could not be removed because they are in use. */
 	skipped: number,
+};
+
+/**  A started connection: the code to show and the page to approve it on. */
+export type ConnectInfo = {
+	userCode: string,
+	verificationUrl: string,
 };
 
 /**  What the player needs to append Steam's original chunks (`replay://…/chunk/…`). */

@@ -49,7 +49,7 @@ function UploadForm({ request, onDone }: { request: UploadRequest; onDone: () =>
   if (!configured) {
     return (
       <div className="modal-body">
-        <Callout>Set up the Fireshare server and an upload token first.</Callout>
+        <Callout>Fireshare is not connected. Connect it in the settings first.</Callout>
         <div className="modal-footer">
           <Button variant="primary" onClick={openSettings}>
             Open settings

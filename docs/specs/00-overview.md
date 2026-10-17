@@ -209,6 +209,7 @@ steamreplay/
 | 9 | [09-ui-revamp.md](09-ui-revamp.md) | Editor workspace: library with thumbnails, big video, inspector tabs, global export queue, themes |
 | 10 | [10-fireshare-upload.md](10-fireshare-upload.md) | Upload clips to our Fireshare server with title, game and tags; copy the share link |
 | 11 | [11-direct-preview.md](11-direct-preview.md) | Play the original HEVC video in the preview; the 720p transcode is the fallback |
+| 12 | [12-fireshare-connect.md](12-fireshare-connect.md) | Connect to Fireshare in the browser (Discord login works); no hand-made upload token |
 | 13 | [13-volume-hover-frames.md](13-volume-hover-frames.md) | Volume and mute in the transport; video frames when hovering the timeline |
 
 **Build order: 01 → 02 → 04 → 03 → 05 → 06 → 08 → 09 → 10 → 11 → 13.** M4 (preview) comes before M3 (export): choosing in and out points makes much more sense when you can see the video. The file numbers were kept, so the M3/M4 labels in the specs still refer to the files.

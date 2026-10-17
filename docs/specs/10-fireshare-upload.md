@@ -117,7 +117,7 @@ Commands (tauri-specta):
 - `RecentExport.fireshare_url: Option<String>` uses `#[serde(default)]`, so entries stored before M10 still load.
 
 ### 4.6 Frontend
-**Settings: `components/settings/FireshareSection.tsx`**, the new "Fireshare" section with the `Share2` icon.
+**Settings: `components/settings/FireshareSection.tsx`**, the new "Fireshare" section with the `Share2` icon. M12 (`12-fireshare-connect.md`) replaces typing the token with **Connect** in the browser; the fields below live on under "Advanced".
 - Fields:
   - Server URL.
   - Token, a password input. Its placeholder reads "•••• saved" when a token is stored.

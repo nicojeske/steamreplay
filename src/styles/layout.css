@@ -607,3 +607,6 @@
 .export-actions { display: flex; flex-direction: column; gap: var(--space-2); }
 .wide-input { flex: 1; width: 100%; min-width: 220px; color: var(--text); }
 .settings-actions { padding: var(--space-3) 0; }
+.settings-advanced { margin-top: var(--space-3); }
+.settings-advanced > summary { cursor: pointer; color: var(--muted); font-size: var(--text-sm); padding: var(--space-2) 0; }
+.callout .row { margin-top: var(--space-2); }

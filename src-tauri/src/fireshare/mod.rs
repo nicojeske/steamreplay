@@ -1,7 +1,11 @@
-//! Uploads to a Fireshare server with an upload token (M10).
+//! Uploads to a Fireshare server with an upload token (M10), which the app can get itself by
+//! connecting (M12).
 
 pub mod client;
+pub mod connect;
 pub mod hash;
+#[cfg(test)]
+mod test_server;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -68,4 +72,12 @@ pub struct UploadResult {
 pub struct FireshareConfig {
     pub url: Option<String>,
     pub has_token: bool,
+}
+
+/// A started connection: the code to show and the page to approve it on.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectInfo {
+    pub user_code: String,
+    pub verification_url: String,
 }

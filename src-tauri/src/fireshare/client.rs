@@ -159,7 +159,7 @@ fn new_check_sum(video_id: &str) -> String {
 }
 
 /// The error and its causes, e.g. "error sending request: connection refused".
-fn error_chain(e: &dyn std::error::Error) -> String {
+pub(super) fn error_chain(e: &dyn std::error::Error) -> String {
     let mut out = e.to_string();
     let mut source = e.source();
     while let Some(s) = source {
@@ -170,23 +170,27 @@ fn error_chain(e: &dyn std::error::Error) -> String {
     out
 }
 
+/// The HTTP client for all calls to Fireshare.
+pub(super) fn http_client() -> AppResult<reqwest::Client> {
+    // Same provider as the updater; whichever builds a client first installs it.
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        // An 8 MiB chunk at ~250 kbit/s.
+        .timeout(Duration::from_secs(300))
+        .user_agent(concat!("SteamReplay/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| AppError::Fireshare(format!("could not set up HTTP: {}", error_chain(&e))))
+}
+
 impl Client {
     pub fn new(url: &str, token: &str) -> AppResult<Self> {
-        // Same provider as the updater; whichever builds a client first installs it.
-        if rustls::crypto::CryptoProvider::get_default().is_none() {
-            let _ = rustls::crypto::ring::default_provider().install_default();
-        }
-        let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            // An 8 MiB chunk at ~250 kbit/s.
-            .timeout(Duration::from_secs(300))
-            .user_agent(concat!("SteamReplay/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|e| AppError::Fireshare(format!("could not set up HTTP: {}", error_chain(&e))))?;
         Ok(Self {
             base: normalize_url(url)?,
             token: token.trim().to_owned(),
-            http,
+            http: http_client()?,
             chunk_bytes: CHUNK_BYTES,
             retry_delays: RETRY_DELAYS.to_vec(),
         })
@@ -221,6 +225,17 @@ impl Client {
     pub async fn check(&self) -> AppResult<String> {
         let resp = self.send(self.get("/api/upload/token"), &CancellationToken::new()).await?;
         Ok(self.json::<CheckReply>(resp).await?.username)
+    }
+
+    /// Deletes this token on the server. A server without the route (404/405) keeps it.
+    pub async fn revoke(&self) -> AppResult<()> {
+        let req = self.http.delete(format!("{}/api/upload/token", self.base)).bearer_auth(&self.token);
+        let resp = self.send(req, &CancellationToken::new()).await?;
+        let status = resp.status();
+        if status.is_success() || matches!(status.as_u16(), 404 | 405) {
+            return Ok(());
+        }
+        Err(status_error(status, &resp.text().await.unwrap_or_default()))
     }
 
     /// Games, tags and folder rules an upload may use.
@@ -449,9 +464,7 @@ impl Chunk<'_> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use tokio::io::AsyncWriteExt;
-    use tokio::net::TcpListener;
-
+    use super::super::test_server;
     use super::*;
 
     #[test]
@@ -502,48 +515,9 @@ mod tests {
         assert!(m.starts_with("HTTP 502: ") && m.len() == "HTTP 502: ".len() + 200);
     }
 
-    /// A server that answers each request with the next scripted response and records the
-    /// requests (request line plus body, as text).
+    /// The scripted test server, insisting on the test token.
     async fn mock(script: Vec<(u16, &'static str)>) -> (String, Arc<Mutex<Vec<String>>>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://{}", listener.local_addr().unwrap());
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let log = seen.clone();
-        tokio::spawn(async move {
-            for (status, body) in script {
-                let (mut sock, _) = listener.accept().await.unwrap();
-                let mut buf = Vec::new();
-                let mut tmp = [0u8; 64 * 1024];
-                let header_end = loop {
-                    let n = sock.read(&mut tmp).await.unwrap();
-                    assert!(n > 0, "client closed early");
-                    buf.extend_from_slice(&tmp[..n]);
-                    if let Some(p) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                        break p + 4;
-                    }
-                };
-                let head = String::from_utf8_lossy(&buf[..header_end]).to_string();
-                let len: usize = head
-                    .lines()
-                    .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap()))
-                    .unwrap_or(0);
-                while buf.len() < header_end + len {
-                    let n = sock.read(&mut tmp).await.unwrap();
-                    assert!(n > 0, "client closed early");
-                    buf.extend_from_slice(&tmp[..n]);
-                }
-                assert!(head.contains("authorization: Bearer fsk_test") || head.contains("Authorization: Bearer fsk_test"));
-                let line = head.lines().next().unwrap_or_default().to_owned();
-                log.lock().unwrap().push(format!("{line}\n{}", String::from_utf8_lossy(&buf[header_end..])));
-                let reply = format!(
-                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                sock.write_all(reply.as_bytes()).await.unwrap();
-                sock.shutdown().await.unwrap();
-            }
-        });
-        (base, seen)
+        test_server::serve(script, Some("Bearer fsk_test")).await
     }
 
     fn test_client(base: &str) -> Client {
@@ -685,6 +659,15 @@ mod tests {
         let e = test_client(&base).upload(&path, &UploadMeta::default(), &progress, &CancellationToken::new()).await.unwrap_err();
         assert!(message(e).contains("rejected the upload token"));
         assert_eq!(seen.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn revokes_its_token() {
+        let (base, seen) = mock(vec![(200, r#"{"deleted":true}"#), (405, "")]).await;
+        let client = test_client(&base);
+        client.revoke().await.unwrap();
+        client.revoke().await.unwrap();
+        assert!(seen.lock().unwrap()[0].starts_with("DELETE /api/upload/token "));
     }
 
     #[tokio::test]

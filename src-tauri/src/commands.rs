@@ -12,7 +12,7 @@ use tauri_plugin_store::StoreExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, AppResult};
-use crate::fireshare::{self, FireshareConfig, FireshareOptions, UploadMeta, UploadResult};
+use crate::fireshare::{self, ConnectInfo, FireshareConfig, FireshareOptions, UploadMeta, UploadResult};
 use crate::media::ffmpeg::{self, FfmpegPaths};
 use crate::media::pyramid::Samples;
 use crate::media::spikes::{self, Spike, SpikeParams};
@@ -874,7 +874,7 @@ fn fireshare_client(app: &AppHandle) -> AppResult<fireshare::Client> {
     let token = read_setting::<String>(app, FIRESHARE_TOKEN_KEY).filter(|t| !t.is_empty());
     match url.zip(token) {
         Some((url, token)) => fireshare::Client::new(&url, &token),
-        None => Err(AppError::Fireshare("Fireshare is not set up. Add the server and token in Settings → Fireshare.".into())),
+        None => Err(AppError::Fireshare("Fireshare is not connected. Connect it in Settings → Fireshare.".into())),
     }
 }
 
@@ -914,6 +914,59 @@ pub async fn fireshare_check(app: AppHandle) -> AppResult<String> {
 #[specta::specta]
 pub async fn fireshare_options(app: AppHandle) -> AppResult<FireshareOptions> {
     fireshare_client(&app)?.options().await
+}
+
+/// The connection the user is approving in the browser. The device code stays in Rust.
+static FIRESHARE_CONNECT: std::sync::Mutex<Option<fireshare::connect::Pending>> = std::sync::Mutex::new(None);
+
+/// Starts connecting to the server at `url` (M12) and stores the URL. The user approves
+/// `verification_url` in the browser; `fireshare_connect_wait` then collects the token.
+#[tauri::command]
+#[specta::specta]
+pub async fn fireshare_connect_start(app: AppHandle, url: String) -> AppResult<ConnectInfo> {
+    let url = fireshare::client::normalize_url(&url)?;
+    write_setting(&app, FIRESHARE_URL_KEY, Some(url.clone()))?;
+    let pending = fireshare::connect::start(&url, &fireshare::connect::client_name()).await?;
+    let info = ConnectInfo { user_code: pending.user_code.clone(), verification_url: pending.verification_url.clone() };
+    *FIRESHARE_CONNECT.lock().expect("connect lock") = Some(pending);
+    Ok(info)
+}
+
+/// Waits for the approval of the started connection and stores the new token, replacing (and
+/// revoking) the old one. Returns the user name. `job_id` is for `cancel_job`.
+#[tauri::command]
+#[specta::specta]
+pub async fn fireshare_connect_wait(app: AppHandle, state: State<'_, MediaState>, job_id: String) -> AppResult<String> {
+    let job = state.start_job(&job_id);
+    let pending = FIRESHARE_CONNECT
+        .lock()
+        .expect("connect lock")
+        .clone()
+        .ok_or_else(|| AppError::Fireshare("No connection was started. Click Connect again.".into()))?;
+    let connected = fireshare::connect::wait(&pending, &job.token).await?;
+    FIRESHARE_CONNECT.lock().expect("connect lock").take();
+    if let Ok(old) = fireshare_client(&app)
+        && let Err(e) = old.revoke().await
+    {
+        log::warn!("could not revoke the previous Fireshare token: {e}");
+    }
+    write_setting(&app, FIRESHARE_URL_KEY, Some(pending.base.clone()))?;
+    write_setting(&app, FIRESHARE_TOKEN_KEY, Some(connected.secret))?;
+    log::info!("connected to {} as {}", pending.base, connected.username);
+    Ok(connected.username)
+}
+
+/// Deletes the token on the server (best effort) and forgets it. The URL stays.
+#[tauri::command]
+#[specta::specta]
+pub async fn fireshare_disconnect(app: AppHandle) -> AppResult<FireshareConfig> {
+    if let Ok(client) = fireshare_client(&app)
+        && let Err(e) = client.revoke().await
+    {
+        log::warn!("could not revoke the Fireshare token: {e}");
+    }
+    write_setting::<String>(&app, FIRESHARE_TOKEN_KEY, None)?;
+    get_fireshare_config(app).await
 }
 
 /// The Fireshare game last chosen for this Steam game.
