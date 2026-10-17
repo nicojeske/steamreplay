@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { Collapsible, RadioGroup } from "radix-ui";
-import { ChevronDown, FolderOpen, Scissors, Zap, Gauge } from "lucide-react";
+import { ChevronDown, CloudUpload, FolderOpen, Scissors, Zap, Gauge } from "lucide-react";
 import {
   commands,
   type ExportMode,
@@ -11,13 +11,15 @@ import {
   type SessionDetail,
   type Snap,
   type StreamInfo,
+  type UploadMeta,
   type VideoCodec,
 } from "../../bindings";
 import { unwrap } from "../../lib/ipc";
 import { formatBytes, formatTimecode } from "../../lib/format";
 import { CODEC_LABELS, MIN_VIDEO_KBPS, PRESETS, PRESET_ORDER, isWiderThan16x9, presetLabel, videoKbps } from "../../lib/exportPresets";
 import { shortcutKeys, useShortcut } from "../../lib/shortcuts";
-import { useExports } from "../../state/exports";
+import { useExports, type Job } from "../../state/exports";
+import { defaultTitle, useFireshare } from "../../state/fireshare";
 import { toast } from "../../state/toasts";
 import { useUi } from "../../state/ui";
 import { useView } from "../../state/view";
@@ -62,6 +64,7 @@ export function ExportTab({ detail }: { detail: SessionDetail }) {
   const [edited, setEdited] = useState(false);
   const jobs = useExports((s) => s.jobs);
   const enqueue = useExports((s) => s.enqueue);
+  const openUpload = useFireshare((s) => s.openUpload);
 
   // The last used mode and precise options (again when the settings dialog may have changed them).
   useEffect(() => {
@@ -155,14 +158,37 @@ export function ExportTab({ detail }: { detail: SessionDetail }) {
     }
   };
 
-  const startExport = () => {
-    if (inS === null || outS === null || !canExport) return;
+  /** The job for the current selection and settings, or `null` if it cannot export. */
+  const jobFor = (upload: UploadMeta | null): Omit<Job, "jobId" | "status"> | null => {
+    if (inS === null || outS === null || !canExport) return null;
     const output = edited && path.trim() ? path.trim() : null;
     const jobMode: ExportMode = precise ? { kind: "precise", ...opts } : { kind: "fast" };
     const label = precise ? `Precise · ${presetLabel(preset)}` : "Fast";
-    enqueue({ sessionId: id, gameName: detail.summary.gameName, inS, outS, output, mode: jobMode, label });
+    const game = detail.summary.gameName;
+    const title = defaultTitle(game, new Date(new Date(detail.summary.startedAt).getTime() + inS * 1000));
+    return { gameName: game, export: { sessionId: id, inS, outS, output, mode: jobMode }, path: null, upload, defaultTitle: title, label };
+  };
+
+  const startExport = () => {
+    const job = jobFor(null);
+    if (!job) return;
+    enqueue(job);
     // The next export gets a fresh default name again.
     setEdited(false);
+  };
+
+  const exportAndUpload = () => {
+    const job = jobFor(null);
+    if (!job) return;
+    openUpload({
+      gameName: job.gameName,
+      defaultTitle: job.defaultTitle,
+      submitLabel: "Export & upload",
+      onSubmit: (upload) => {
+        enqueue({ ...job, upload });
+        setEdited(false);
+      },
+    });
   };
 
   useShortcut("export", () => {
@@ -171,7 +197,7 @@ export function ExportTab({ detail }: { detail: SessionDetail }) {
     else useUi.getState().set({ inspectorTab: "export" });
   });
 
-  const sessionJobs = jobs.filter((j) => j.sessionId === id);
+  const sessionJobs = jobs.filter((j) => j.export?.sessionId === id);
 
   return (
     <div className="export-tab">
@@ -271,10 +297,15 @@ export function ExportTab({ detail }: { detail: SessionDetail }) {
       )}
       {codecMissing && <Callout tone="warn">This ffmpeg cannot encode {CODEC_LABELS[opts.codec]}; choose another codec.</Callout>}
 
-      <Button variant="primary" size="lg" className="export-button" icon={<Scissors size={16} />} onClick={startExport} disabled={!canExport}>
-        Export clip
-        <Kbd>{shortcutKeys("export")}</Kbd>
-      </Button>
+      <div className="export-actions">
+        <Button variant="primary" size="lg" className="export-button" icon={<Scissors size={16} />} onClick={startExport} disabled={!canExport}>
+          Export clip
+          <Kbd>{shortcutKeys("export")}</Kbd>
+        </Button>
+        <Button size="lg" className="export-button" icon={<CloudUpload size={16} />} onClick={exportAndUpload} disabled={!canExport}>
+          Export & upload to Fireshare
+        </Button>
+      </div>
 
       {sessionJobs.length > 0 && (
         <section className="export-section">

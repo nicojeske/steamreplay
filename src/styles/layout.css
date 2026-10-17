@@ -569,3 +569,31 @@
 .shortcuts-grid dl { margin: 0; }
 .shortcut-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: var(--text-sm); }
 .shortcut-row dd { margin: 0; }
+
+/* --- Fireshare upload (M10) -------------------------------------------------------------------- */
+
+.upload-modal { width: min(520px, calc(100vw - 32px)); }
+.upload-form,
+.upload-modal .modal-body { display: flex; flex-direction: column; gap: var(--space-4); overflow-y: auto; padding: var(--space-4) var(--space-5) var(--space-5); }
+.upload-field { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: var(--text-sm); }
+.upload-field .input,
+.upload-field .select { width: 100%; color: var(--text); font-size: var(--text-md); }
+.upload-field .hint-text { font-size: var(--text-xs); }
+.tag-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-chip {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--tag) 55%, transparent);
+  border-radius: 13px;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.tag-chip:hover { background: color-mix(in srgb, var(--tag) 14%, transparent); }
+.tag-chip.is-on { border-color: var(--tag); background: color-mix(in srgb, var(--tag) 30%, transparent); }
+.tag-chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.modal-footer { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.export-actions { display: flex; flex-direction: column; gap: var(--space-2); }
+.wide-input { flex: 1; width: 100%; min-width: 220px; color: var(--text); }
+.settings-actions { padding: var(--space-3) 0; }

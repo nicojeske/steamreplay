@@ -15,6 +15,8 @@ pub enum AppError {
     Store(String),
     #[error("{0}")]
     Ffmpeg(String),
+    #[error("{0}")]
+    Fireshare(String),
     #[error("cancelled")]
     Cancelled,
 }
@@ -27,6 +29,7 @@ pub enum AppErrorKind {
     Parse,
     Store,
     Ffmpeg,
+    Fireshare,
     Cancelled,
 }
 
@@ -49,6 +52,7 @@ impl AppError {
             Self::Parse(_) => AppErrorKind::Parse,
             Self::Store(_) => AppErrorKind::Store,
             Self::Ffmpeg(_) => AppErrorKind::Ffmpeg,
+            Self::Fireshare(_) => AppErrorKind::Fireshare,
             Self::Cancelled => AppErrorKind::Cancelled,
         };
         AppErrorPayload { kind, message: self.to_string() }

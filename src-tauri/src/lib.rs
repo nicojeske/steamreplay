@@ -1,5 +1,6 @@
 mod commands;
 mod error;
+mod fireshare;
 mod media;
 mod steam;
 
@@ -45,6 +46,13 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::get_cache_sizes,
         commands::clear_caches,
         commands::updater_supported,
+        commands::get_fireshare_config,
+        commands::set_fireshare_config,
+        commands::fireshare_check,
+        commands::fireshare_options,
+        commands::get_fireshare_game,
+        commands::set_fireshare_game,
+        commands::fireshare_upload,
     ])
 }
 

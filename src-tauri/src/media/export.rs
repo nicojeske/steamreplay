@@ -123,6 +123,9 @@ pub struct RecentExport {
     pub size_bytes: u64,
     /// RFC 3339 local time.
     pub finished_at: String,
+    /// The share link once the file was uploaded to Fireshare (M10).
+    #[serde(default)]
+    pub fireshare_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -733,6 +736,7 @@ mod tests {
             mode: ExportModeKind::Fast,
             size_bytes: 1,
             finished_at: String::new(),
+            fireshare_url: None,
         };
         let mut list = Vec::new();
         for i in 0..25 {

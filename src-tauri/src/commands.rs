@@ -12,6 +12,7 @@ use tauri_plugin_store::StoreExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, AppResult};
+use crate::fireshare::{self, FireshareConfig, FireshareOptions, UploadMeta, UploadResult};
 use crate::media::ffmpeg::{self, FfmpegPaths};
 use crate::media::pyramid::Samples;
 use crate::media::spikes::{self, Spike, SpikeParams};
@@ -733,6 +734,7 @@ pub async fn export_clip(
         mode: if exact { ExportModeKind::Precise } else { ExportModeKind::Fast },
         size_bytes: done.size_bytes,
         finished_at: chrono::Local::now().to_rfc3339(),
+        fireshare_url: None,
     };
     let list = read_setting::<Vec<RecentExport>>(&app, RECENT_EXPORTS_KEY).unwrap_or_default();
     if let Err(e) = write_setting(&app, RECENT_EXPORTS_KEY, Some(export::push_recent(list, recent))) {
@@ -818,6 +820,113 @@ pub async fn remove_recent_export(app: AppHandle, path: PathBuf) -> AppResult<()
     let mut list = read_setting::<Vec<RecentExport>>(&app, RECENT_EXPORTS_KEY).unwrap_or_default();
     list.retain(|e| e.path != path);
     write_setting(&app, RECENT_EXPORTS_KEY, Some(list))
+}
+
+// --- Fireshare (M10) ------------------------------------------------------------------------------
+
+const FIRESHARE_URL_KEY: &str = "fireshareUrl";
+const FIRESHARE_TOKEN_KEY: &str = "fireshareToken";
+const FIRESHARE_GAMES_KEY: &str = "fireshareGameMap";
+
+fn fireshare_client(app: &AppHandle) -> AppResult<fireshare::Client> {
+    let url = read_setting::<String>(app, FIRESHARE_URL_KEY).filter(|u| !u.is_empty());
+    let token = read_setting::<String>(app, FIRESHARE_TOKEN_KEY).filter(|t| !t.is_empty());
+    match url.zip(token) {
+        Some((url, token)) => fireshare::Client::new(&url, &token),
+        None => Err(AppError::Fireshare("Fireshare is not set up. Add the server and token in Settings → Fireshare.".into())),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_fireshare_config(app: AppHandle) -> AppResult<FireshareConfig> {
+    Ok(FireshareConfig {
+        url: read_setting::<String>(&app, FIRESHARE_URL_KEY).filter(|u| !u.is_empty()),
+        has_token: read_setting::<String>(&app, FIRESHARE_TOKEN_KEY).is_some_and(|t| !t.is_empty()),
+    })
+}
+
+/// `url`: `None` or empty clears it. `token`: `None` keeps the stored one, `""` removes it.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_fireshare_config(app: AppHandle, url: Option<String>, token: Option<String>) -> AppResult<FireshareConfig> {
+    let url = match url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+        Some(u) => Some(fireshare::client::normalize_url(u)?),
+        None => None,
+    };
+    write_setting(&app, FIRESHARE_URL_KEY, url)?;
+    if let Some(t) = token {
+        let t = t.trim().to_owned();
+        write_setting(&app, FIRESHARE_TOKEN_KEY, (!t.is_empty()).then_some(t))?;
+    }
+    get_fireshare_config(app).await
+}
+
+/// The user name of the stored token.
+#[tauri::command]
+#[specta::specta]
+pub async fn fireshare_check(app: AppHandle) -> AppResult<String> {
+    fireshare_client(&app)?.check().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fireshare_options(app: AppHandle) -> AppResult<FireshareOptions> {
+    fireshare_client(&app)?.options().await
+}
+
+/// The Fireshare game last chosen for this Steam game.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_fireshare_game(app: AppHandle, steam_game: String) -> AppResult<Option<u32>> {
+    let map = read_setting::<HashMap<String, u32>>(&app, FIRESHARE_GAMES_KEY).unwrap_or_default();
+    Ok(map.get(&steam_game).copied())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_fireshare_game(app: AppHandle, steam_game: String, game_id: Option<u32>) -> AppResult<()> {
+    let mut map = read_setting::<HashMap<String, u32>>(&app, FIRESHARE_GAMES_KEY).unwrap_or_default();
+    match game_id {
+        Some(g) => map.insert(steam_game, g),
+        None => map.remove(&steam_game),
+    };
+    write_setting(&app, FIRESHARE_GAMES_KEY, Some(map))
+}
+
+/// Uploads a file, unless the server already has it. `job_id` is for `cancel_job`.
+#[tauri::command]
+#[specta::specta]
+pub async fn fireshare_upload(
+    app: AppHandle,
+    state: State<'_, MediaState>,
+    path: PathBuf,
+    meta: UploadMeta,
+    job_id: String,
+    progress: Channel<Progress>,
+) -> AppResult<UploadResult> {
+    let job = state.start_job(&job_id);
+    let client = fireshare_client(&app)?;
+    let on_progress: ffmpeg::ProgressFn = Arc::new(move |fraction| {
+        let _ = progress.send(Progress { fraction });
+    });
+    let started = std::time::Instant::now();
+    let result = client.upload(&path, &meta, &on_progress, &job.token).await?;
+    log::info!(
+        "{} {} to {} in {:?}",
+        if result.duplicate { "found" } else { "uploaded" },
+        path.display(),
+        result.url,
+        started.elapsed()
+    );
+    let mut list = read_setting::<Vec<RecentExport>>(&app, RECENT_EXPORTS_KEY).unwrap_or_default();
+    if let Some(entry) = list.iter_mut().find(|e| e.path == path) {
+        entry.fireshare_url = Some(result.url.clone());
+        if let Err(e) = write_setting(&app, RECENT_EXPORTS_KEY, Some(list)) {
+            log::warn!("could not store the share link: {e}");
+        }
+    }
+    Ok(result)
 }
 
 // --- caches (M6) ----------------------------------------------------------------------------------

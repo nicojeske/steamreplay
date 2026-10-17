@@ -1,11 +1,13 @@
 import { Tabs } from "radix-ui";
-import { Download, Film, HardDrive, Info, Palette, Terminal, AudioWaveform } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Download, Film, HardDrive, Info, Palette, Share2, Terminal, AudioWaveform } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { DiscoveryInfo } from "../../bindings";
 import type { Update } from "../../lib/updater";
 import { Modal } from "../ui/Modal";
 import { AboutSection } from "./AboutSection";
+import { useFireshare } from "../../state/fireshare";
 import { ExportSection } from "./ExportSection";
+import { FireshareSection } from "./FireshareSection";
 import { FfmpegSection } from "./FfmpegSection";
 import { GeneralSection } from "./GeneralSection";
 import { PreviewSection } from "./PreviewSection";
@@ -25,9 +27,18 @@ type Props = {
 /** The settings, one section per tab in a side nav. */
 export function SettingsDialog({ open, info, onClose, onChanged, onShowShortcuts, onUpdate }: Props) {
   const [section, setSection] = useState("general");
+  // "Open settings" from the upload dialog.
+  useEffect(
+    () =>
+      useFireshare.subscribe((s, prev) => {
+        if (s.settingsSeq !== prev.settingsSeq) setSection("fireshare");
+      }),
+    [],
+  );
   const sections: { id: string; label: string; icon: ReactNode; body: ReactNode }[] = [
     { id: "general", label: "General", icon: <Palette size={16} />, body: <GeneralSection info={info} onChanged={onChanged} /> },
     { id: "export", label: "Export", icon: <Download size={16} />, body: <ExportSection /> },
+    { id: "fireshare", label: "Fireshare", icon: <Share2 size={16} />, body: <FireshareSection /> },
     { id: "moments", label: "Loud moments", icon: <AudioWaveform size={16} />, body: <SpikeSection /> },
     { id: "preview", label: "Video preview", icon: <Film size={16} />, body: <PreviewSection /> },
     { id: "ffmpeg", label: "ffmpeg", icon: <Terminal size={16} />, body: <FfmpegSection /> },

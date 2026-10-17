@@ -17,10 +17,11 @@ Run this on a Windows machine that has never had SteamReplay installed (or unins
 11. **Keyboard and layout.** `?` lists the shortcuts; try `Space`, `J`/`K`/`L`, `N`/`P`, `I`/`O`, `Ctrl+B` and `Ctrl+,`, also on a German keyboard (`?` is Shift+ß). Click a slider under *Detection* and press `←`/`→`: the slider moves, the video does not seek. Drag the borders between the panels; the sizes are still there after a restart, and so is the last opened recording.
 12. **Exports in the background.** Start a *Precise* export, then open another recording right away. The export keeps running; the *Exports* button in the top bar shows its progress and lists it.
 13. **Themes.** *Settings → General → Theme*: Light, Dark and System all work, and the waveform changes colour at once.
-14. **Uninstall.** *Settings → Apps → SteamReplay → Uninstall*. The Start menu entry and `%LOCALAPPDATA%\SteamReplay` are gone. Only the app data under `%APPDATA%\de.steamreplay.app` and `%LOCALAPPDATA%\de.steamreplay.app` may stay.
+14. **Fireshare upload.** *Settings → Fireshare*: enter the server and an upload token (Fireshare → Account → Upload tokens), then *Save*. It shows "Connected as <you>". Select a range, choose *Export & upload to Fireshare*, and pick the game and a tag. The job shows exporting and then uploading. The toast's *Copy link* gives `…/w/<id>`, which plays in the browser within a minute with the title, game and tag. *Upload to Fireshare* on the same recent export says "already on Fireshare".
+15. **Uninstall.** *Settings → Apps → SteamReplay → Uninstall*. The Start menu entry and `%LOCALAPPDATA%\SteamReplay` are gone. Only the app data under `%APPDATA%\de.steamreplay.app` and `%LOCALAPPDATA%\de.steamreplay.app` may stay.
 
 ## Results
 
-| Tester | GPU / driver | Windows version | Preview backend | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | Notes |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| | | | | | | | | | | | | | | | | | | |
+| Tester | GPU / driver | Windows version | Preview backend | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| | | | | | | | | | | | | | | | | | | | |

@@ -44,6 +44,11 @@ tokio-util = "0.7.20"
 lru = "0.18.5"
 which = "8.0.6"
 sha1_smol = { version = "1.0.1", features = ["std"] }
+xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
+bytes = "1.12.1"
+futures-util = "0.3.34"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "multipart", "json", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

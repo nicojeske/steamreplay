@@ -5,7 +5,9 @@ import { commands, type RecentEntry } from "../../bindings";
 import { formatBytes, formatRelativeDate, formatTimecode } from "../../lib/format";
 import { unwrap } from "../../lib/ipc";
 import { isActive, useExports } from "../../state/exports";
+import { defaultTitle } from "../../state/fireshare";
 import { toast } from "../../state/toasts";
+import { FireshareActions } from "../fireshare/FireshareActions";
 import { PathActions } from "../PathActions";
 import { Button, IconButton } from "../ui/Button";
 import { JobRow } from "./JobRow";
@@ -102,7 +104,15 @@ function RecentExports() {
               </div>
             </div>
             {exists ? (
-              <PathActions path={e.path} />
+              <>
+                <FireshareActions
+                  path={e.path}
+                  url={e.fireshareUrl ?? null}
+                  gameName={e.gameName}
+                  defaultTitle={defaultTitle(e.gameName, new Date(e.finishedAt))}
+                />
+                <PathActions path={e.path} />
+              </>
             ) : (
               <IconButton label="Remove from the list" size="sm" icon={<Trash2 size={15} />} onClick={() => void remove(e.path)} />
             )}

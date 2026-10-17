@@ -132,6 +132,17 @@ export const commands = {
 	 *  A `.deb` install or `tauri dev` cannot.
 	 */
 	updaterSupported: () => __TAURI_INVOKE<boolean>("updater_supported"),
+	getFireshareConfig: () => typedError<FireshareConfig, AppError>(__TAURI_INVOKE("get_fireshare_config")),
+	/**  `url`: `None` or empty clears it. `token`: `None` keeps the stored one, `""` removes it. */
+	setFireshareConfig: (url: string | null, token: string | null) => typedError<FireshareConfig, AppError>(__TAURI_INVOKE("set_fireshare_config", { url, token })),
+	/**  The user name of the stored token. */
+	fireshareCheck: () => typedError<string, AppError>(__TAURI_INVOKE("fireshare_check")),
+	fireshareOptions: () => typedError<FireshareOptions, AppError>(__TAURI_INVOKE("fireshare_options")),
+	/**  The Fireshare game last chosen for this Steam game. */
+	getFireshareGame: (steamGame: string) => typedError<number | null, AppError>(__TAURI_INVOKE("get_fireshare_game", { steamGame })),
+	setFireshareGame: (steamGame: string, gameId: number | null) => typedError<null, AppError>(__TAURI_INVOKE("set_fireshare_game", { steamGame, gameId })),
+	/**  Uploads a file, unless the server already has it. `job_id` is for `cancel_job`. */
+	fireshareUpload: (path: string, meta: UploadMeta, jobId: string, progress: Channel<Progress>) => typedError<UploadResult, AppError>(__TAURI_INVOKE("fireshare_upload", { path, meta, jobId, progress })),
 };
 
 /* Types */
@@ -140,7 +151,7 @@ export type AppError = {
 	message: string,
 };
 
-export type AppErrorKind = "notFound" | "io" | "parse" | "store" | "ffmpeg" | "cancelled";
+export type AppErrorKind = "notFound" | "io" | "parse" | "store" | "ffmpeg" | "fireshare" | "cancelled";
 
 /**  How a segment is decoded, scaled and encoded. */
 export type Backend = 
@@ -231,6 +242,31 @@ export type FfmpegPaths = {
 };
 
 export type FfmpegSource = "settings" | "bundled" | "path";
+
+/**  The server and whether a token is stored. The token itself never goes to the webview. */
+export type FireshareConfig = {
+	url: string | null,
+	hasToken: boolean,
+};
+
+/**  What an upload may name, from `/api/upload/token/options`. */
+export type FireshareOptions = {
+	defaultFolder: string | null,
+	games: Game[],
+	tags: Tag[],
+	folderRules: FolderRule[],
+};
+
+/**  Uploads of this game go to `folder` on the server. */
+export type FolderRule = {
+	folder: string,
+	gameId: number,
+};
+
+export type Game = {
+	id: number,
+	name: string,
+};
 
 export type Gap = {
 	startS: number,
@@ -329,6 +365,8 @@ export type RecentExport = {
 	sizeBytes: number,
 	/**  RFC 3339 local time. */
 	finishedAt: string,
+	/**  The share link once the file was uploaded to Fireshare (M10). */
+	fireshareUrl?: string | null,
 };
 
 /**  A Steam root candidate and what was found there (for the empty state and diagnostics). */
@@ -426,6 +464,29 @@ export type StreamInfo = {
 	height: number | null,
 	sampleRate: number | null,
 	channels: number | null,
+};
+
+export type Tag = {
+	id: number,
+	name: string,
+	/**  CSS colour, e.g. `#ff5500`. */
+	color: string | null,
+};
+
+export type UploadMeta = {
+	title: string | null,
+	gameId: number | null,
+	tagIds: number[],
+	/**  The folder of the game's folder rule; `None` for the server's default folder. */
+	folder: string | null,
+};
+
+export type UploadResult = {
+	videoId: string,
+	/**  `<server>/w/<video id>`. */
+	url: string,
+	/**  The server already had this clip; nothing was uploaded. */
+	duplicate: boolean,
 };
 
 export type VideoCodec = "h264" | "hevc" | "av1";

@@ -8,9 +8,11 @@ import { checkForUpdate, type Update } from "./lib/updater";
 import { toast } from "./state/toasts";
 import { LIMITS, useUi } from "./state/ui";
 import { useView } from "./state/view";
+import { useFireshare } from "./state/fireshare";
 import { Editor } from "./components/editor/Editor";
 import { Library } from "./components/library/Library";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
+import { UploadDialog } from "./components/fireshare/UploadDialog";
 import { ShortcutsOverlay } from "./components/ShortcutsOverlay";
 import { Toasts } from "./components/Toasts";
 import { TopBar } from "./components/TopBar";
@@ -103,6 +105,14 @@ export default function App() {
     useView.getState().bumpSettings();
   };
 
+  // Fireshare: whether uploads are set up, and "Open settings" from the upload dialog.
+  useEffect(() => {
+    useFireshare.getState().loadConfig().catch((e: unknown) => console.warn("fireshare config", e));
+    return useFireshare.subscribe((s, prev) => {
+      if (s.settingsSeq !== prev.settingsSeq) setSettingsOpen(true);
+    });
+  }, []);
+
   useShortcut("shortcuts", () => setShortcutsOpen(true));
   useShortcut("settings", () => setSettingsOpen(true));
   useShortcut("library", () => useUi.getState().set({ libraryCollapsed: !useUi.getState().libraryCollapsed }));
@@ -183,6 +193,7 @@ export default function App() {
           }}
           onUpdate={setUpdate}
         />
+        <UploadDialog />
         <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
         <Toasts>{update && <UpdatePrompt update={update} onLater={() => setUpdate(null)} />}</Toasts>
       </div>
