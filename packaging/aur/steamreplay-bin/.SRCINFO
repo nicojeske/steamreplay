@@ -1,0 +1,23 @@
+pkgbase = steamreplay-bin
+	pkgdesc = Find and export the loud moments in Steam game recordings
+	pkgver = 0.3.3
+	pkgrel = 1
+	url = https://github.com/nicojeske/steamreplay
+	arch = x86_64
+	license = GPL-3.0-only
+	depends = webkit2gtk-4.1
+	depends = gtk3
+	depends = ffmpeg
+	depends = gst-plugins-base
+	depends = gst-plugins-good
+	depends = gst-plugins-bad
+	depends = gst-libav
+	provides = steamreplay
+	conflicts = steamreplay
+	noextract = SteamReplay_0.3.3_amd64.deb
+	options = !strip
+	options = !debug
+	source = SteamReplay_0.3.3_amd64.deb::https://github.com/nicojeske/steamreplay/releases/download/v0.3.3/SteamReplay_0.3.3_amd64.deb
+	sha256sums = SKIP
+
+pkgname = steamreplay-bin

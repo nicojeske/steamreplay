@@ -1,0 +1,24 @@
+# Maintainer: Nico Jeske <njeske@brockhaus-ag.de>
+pkgname=steamreplay-bin
+pkgver=0.3.3
+pkgrel=1
+pkgdesc="Find and export the loud moments in Steam game recordings"
+arch=('x86_64')
+url="https://github.com/nicojeske/steamreplay"
+license=('GPL-3.0-only')
+depends=('webkit2gtk-4.1' 'gtk3' 'ffmpeg'
+         'gst-plugins-base' 'gst-plugins-good' 'gst-plugins-bad' 'gst-libav')
+provides=('steamreplay')
+conflicts=('steamreplay')
+options=('!strip' '!debug')
+source=("SteamReplay_${pkgver}_amd64.deb::${url}/releases/download/v${pkgver}/SteamReplay_${pkgver}_amd64.deb")
+noextract=("SteamReplay_${pkgver}_amd64.deb")
+sha256sums=('SKIP')
+
+package() {
+  bsdtar -xOf "SteamReplay_${pkgver}_amd64.deb" 'data.tar*' | bsdtar -xf - -C "$pkgdir"
+  # Tauri names the HiDPI icon folder "256x256@2"; the theme spec wants "256x256@2x".
+  if [[ -d "$pkgdir/usr/share/icons/hicolor/256x256@2" ]]; then
+    mv "$pkgdir/usr/share/icons/hicolor/256x256@2" "$pkgdir/usr/share/icons/hicolor/256x256@2x"
+  fi
+}

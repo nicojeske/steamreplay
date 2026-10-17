@@ -29,6 +29,14 @@ SteamReplay checks for a new version a few seconds after it starts. When there i
 
 ## Install on Linux
 
+### Arch Linux and derivatives (recommended)
+
+Install [`steamreplay-bin`](https://aur.archlinux.org/packages/steamreplay-bin) from the AUR, e.g. `paru -S steamreplay-bin`. It uses the system WebKitGTK, GStreamer and ffmpeg, so video decoding is hardware-accelerated like in `pnpm tauri dev`. Updates come through the AUR helper; the in-app updater is off.
+
+### AppImage (any distro)
+
+The AppImage brings its own WebKitGTK and GStreamer, so the preview may play at a low frame rate without hardware decoding.
+
 Download `SteamReplay_x.y.z_amd64.AppImage` from the [latest release](https://github.com/nicojeske/steamreplay/releases/latest), make it executable and run it:
 
 ```sh
@@ -82,6 +90,7 @@ Every push to `main` runs the checks on Linux and Windows and builds the Windows
 1. `pnpm bump 0.3.0`: sets the version in `package.json`, `Cargo.toml` and `Cargo.lock`, commits `release: v0.3.0` and tags `v0.3.0`.
 2. `git push --follow-tags`: the `release` workflow builds a **draft** release with the installer, the AppImage, their `.sig` files and `latest.json`. A tag that does not match `package.json` fails the build. Tags with a suffix (`v0.3.0-rc.1`) become pre-releases.
 3. Check the draft (install it once), then **publish** it. Installed apps only see published releases.
+4. AUR: in `packaging/aur/steamreplay-bin`, set `pkgver` (and `pkgrel=1`), run `updpkgsums && makepkg --printsrcinfo > .SRCINFO`, commit, and push `PKGBUILD` and `.SRCINFO` to `ssh://aur@aur.archlinux.org/steamreplay-bin.git`. This needs the published release, because the PKGBUILD downloads its `.deb`.
 
 **Updater signing key.** Updates are signed with a private key stored in the repo secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The public key is in `src-tauri/tauri.conf.json`. **Keep a backup of the private key.** If it is lost, installed copies can never be updated again; everyone would have to reinstall by hand. This key is not Windows code signing. It only proves that an update comes from this repo.
 
