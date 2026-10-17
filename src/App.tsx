@@ -8,6 +8,8 @@ import { ShortcutsOverlay } from "./components/ShortcutsOverlay";
 import { dialogOpen, isTyping } from "./lib/keys";
 import { useView } from "./state/view";
 import { Toasts, type Toast } from "./components/Toasts";
+import { UpdatePrompt } from "./components/UpdatePrompt";
+import { checkForUpdate, type Update } from "./lib/updater";
 import "./App.css";
 
 export default function App() {
@@ -20,6 +22,7 @@ export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextToast = useRef(0);
+  const [update, setUpdate] = useState<Update | null>(null);
 
   const showError = useCallback((e: unknown) => {
     const id = nextToast.current++;
@@ -46,6 +49,17 @@ export default function App() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // One quiet update check shortly after start; offline or rate-limited is not worth a toast.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      checkForUpdate().then(
+        (u) => u && setUpdate(u),
+        (e: unknown) => console.warn("update check failed:", e),
+      );
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // `?` shows the shortcuts. Matched by `e.key`, so Shift+ß on a German layout works too.
   useEffect(() => {
@@ -137,10 +151,13 @@ export default function App() {
             setShortcutsOpen(true);
           }}
           onError={showError}
+          onUpdate={setUpdate}
         />
       )}
       {shortcutsOpen && <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />}
-      <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
+      <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))}>
+        {update && <UpdatePrompt update={update} onLater={() => setUpdate(null)} />}
+      </Toasts>
     </div>
   );
 }

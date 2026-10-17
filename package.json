@@ -1,6 +1,7 @@
 {
   "name": "steamreplay",
   "private": true,
+  "license": "GPL-3.0-only",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
@@ -10,14 +11,17 @@
     "tauri": "tauri",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
-    "fetch-ffmpeg": "node scripts/fetch-ffmpeg.ts"
+    "fetch-ffmpeg": "node scripts/fetch-ffmpeg.ts",
+    "bump": "node scripts/bump.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-clipboard-manager": "^2.5.0",
     "@tauri-apps/plugin-dialog": "^2.8.3",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2.4.0",
     "@tauri-apps/plugin-store": "^2.5.0",
+    "@tauri-apps/plugin-updater": "^2.14.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zustand": "^5.0.15"

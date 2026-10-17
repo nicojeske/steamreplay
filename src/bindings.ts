@@ -127,6 +127,11 @@ export const commands = {
 	 *  running preview transcodes and exports are left alone.
 	 */
 	clearCaches: () => typedError<ClearResult, AppError>(__TAURI_INVOKE("clear_caches")),
+	/**
+	 *  Whether this build can update itself: the NSIS install on Windows and the AppImage on Linux.
+	 *  A `.deb` install or `tauri dev` cannot.
+	 */
+	updaterSupported: () => __TAURI_INVOKE<boolean>("updater_supported"),
 };
 
 /* Types */

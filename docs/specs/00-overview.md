@@ -192,7 +192,7 @@ steamreplay/
 - **Time:** the backend uses `f64` seconds of **video time**. Video time 0 is the first chunk on disk (`startNumber`). Everything sent to the UI is in video time.
 - **Long jobs:** audio analysis, export and preview run as tokio tasks and report progress through a Tauri `Channel<Progress>`. Commands that start long jobs return when the job finishes. Cancelling uses a job id plus `cancel_job(id)`.
 - **Steam's files are read-only:** the tool never writes, renames or deletes anything inside Steam's folders.
-- **Windows builds:** a GitHub Actions workflow (from M1) builds the Windows NSIS installer on `windows-latest` for every push to `main` and uploads it as an artifact. Teammates install that build to test each milestone. If CI is not available, `cargo tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc` cross-compiles from Linux (experimental, NSIS only).
+- **Windows builds:** a GitHub Actions workflow (from M1) builds the Windows NSIS installer on `windows-latest` for every push to `main` and uploads it as an artifact. Since M8, teammates install from **GitHub Releases** instead: pushing a `v*` tag (`pnpm bump`) builds a draft release (`release.yml`) with the per-user NSIS installer, the AppImage and the updater's `latest.json`, and installed copies update themselves once the release is published. If CI is not available, `cargo tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc` cross-compiles from Linux (experimental, NSIS only).
 - **Tooling:** `cargo clippy -D warnings`, `cargo test`, `pnpm tsc --noEmit`, `pnpm lint` (eslint). pnpm is the package manager.
 
 ## Milestones

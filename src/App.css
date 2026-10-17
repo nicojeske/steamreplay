@@ -126,6 +126,16 @@ dialog.settings h3 { font-size: 13px; margin: 18px 0 6px; color: var(--muted); }
   max-width: 420px; padding: 10px 14px; border-radius: 8px; cursor: pointer;
   background: #7f1d1d; color: #fff; box-shadow: 0 4px 14px rgb(0 0 0 / 0.25);
 }
+.toast.update {
+  cursor: default; background: var(--panel); color: var(--text); border: 1px solid var(--accent);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.toast.update .buttons { margin-top: 2px; }
+.toast.update button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.toast-progress { height: 4px; border-radius: 2px; background: var(--accent-soft); overflow: hidden; }
+.toast-progress > div { height: 100%; background: var(--accent); transition: width 0.2s; }
+.toast-progress > .indeterminate { width: 30%; animation: toast-progress 1.2s ease-in-out infinite; }
+@keyframes toast-progress { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
 
 .waveform-panel { margin-bottom: 18px; }
 .timeline {

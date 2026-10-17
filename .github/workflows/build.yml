@@ -70,7 +70,8 @@ jobs:
       - run: pnpm tsc --noEmit
 
       - name: tauri build
-        run: pnpm tauri build --bundles ${{ matrix.bundles }}
+        # No signing key here; updater artifacts are only built by release.yml.
+        run: pnpm tauri build --bundles ${{ matrix.bundles }} --config src-tauri/tauri.ci.conf.json
 
       - name: Upload Windows installer
         if: runner.os == 'Windows'

@@ -122,13 +122,14 @@ pub async fn get_diagnostics(app: AppHandle) -> AppResult<String> {
         let info = discover(&app)?;
         let names = locate::game_names(&info.steam_roots, true);
         let sessions = recordings::list_sessions(&info.accounts, &names);
-        Ok(diagnostics::report(
+        let report = diagnostics::report(
             &info.checked_roots,
             &info.steam_roots,
             info.recordings_root_override.as_deref(),
             &info.accounts,
             &sessions,
-        ))
+        );
+        Ok(format!("SteamReplay {}\n{report}", app.package_info().version))
     })
     .await
 }
@@ -357,6 +358,14 @@ pub async fn cancel_job(state: State<'_, MediaState>, job_id: String) -> AppResu
         log::info!("cancel_job: {job_id} is not running");
     }
     Ok(())
+}
+
+/// Whether this build can update itself: the NSIS install on Windows and the AppImage on Linux.
+/// A `.deb` install or `tauri dev` cannot.
+#[tauri::command]
+#[specta::specta]
+pub fn updater_supported() -> bool {
+    cfg!(windows) || (cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_some())
 }
 
 /// The ffmpeg that analysis and export use.

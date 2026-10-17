@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { getVersion } from "@tauri-apps/api/app";
 import {
   commands,
   type Backend,
@@ -17,6 +18,7 @@ import { formatBytes } from "../lib/format";
 import { errorMessage, unwrap } from "../lib/ipc";
 import { sensitivityToThreshold, thresholdToSensitivity } from "../lib/spikeTuning";
 import { useView } from "../state/view";
+import { checkForUpdate, updaterSupported, type Update } from "../lib/updater";
 
 const BACKEND_NAMES: Record<Backend, string> = {
   cuda: "NVIDIA (CUDA / NVENC)",
@@ -33,9 +35,11 @@ type Props = {
   onChanged: () => void;
   onShowShortcuts: () => void;
   onError: (e: unknown) => void;
+  /** A newer release was found; the app shows the install prompt. */
+  onUpdate: (update: Update) => void;
 };
 
-export function SettingsDialog({ info, onClose, onChanged, onShowShortcuts, onError }: Props) {
+export function SettingsDialog({ info, onClose, onChanged, onShowShortcuts, onError, onUpdate }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const [copied, setCopied] = useState(false);
   const [ffmpeg, setFfmpeg] = useState<FfmpegPaths | string | null>(null);
@@ -132,6 +136,14 @@ export function SettingsDialog({ info, onClose, onChanged, onShowShortcuts, onEr
 
       <h3>Storage</h3>
       <StorageSection onError={onError} />
+
+      <h3>About</h3>
+      <AboutSection
+        onUpdate={(u) => {
+          onUpdate(u);
+          ref.current?.close();
+        }}
+      />
 
       <h3>Diagnostics</h3>
       <p className="muted">Detected Steam folders</p>
@@ -430,6 +442,48 @@ function PreviewSection({ onError }: { onError: (e: unknown) => void }) {
         </button>
         <span className="muted">{formatBytes(settings.cacheBytes)} used</span>
       </div>
+    </>
+  );
+}
+
+type UpdateCheck = "idle" | "checking" | "upToDate" | "failed";
+
+function AboutSection({ onUpdate }: { onUpdate: (update: Update) => void }) {
+  const [version, setVersion] = useState<string | null>(null);
+  const [supported, setSupported] = useState(false);
+  const [state, setState] = useState<UpdateCheck>("idle");
+
+  useEffect(() => {
+    void getVersion().then(setVersion);
+    void updaterSupported().then(setSupported);
+  }, []);
+
+  const checkNow = async () => {
+    setState("checking");
+    try {
+      const update = await checkForUpdate();
+      if (update) onUpdate(update);
+      else setState("upToDate");
+    } catch (e) {
+      console.warn("update check failed:", e);
+      setState("failed");
+    }
+  };
+
+  return (
+    <>
+      <p>Version {version ?? "…"}</p>
+      {supported ? (
+        <div className="buttons">
+          <button type="button" onClick={() => void checkNow()} disabled={state === "checking"}>
+            {state === "checking" ? "Checking…" : "Check for updates"}
+          </button>
+          {state === "upToDate" && <span className="muted">Up to date.</span>}
+          {state === "failed" && <span className="warn">Could not check for updates.</span>}
+        </div>
+      ) : (
+        <p className="muted">This build does not update itself (only the Windows installer and the AppImage do).</p>
+      )}
     </>
   );
 }

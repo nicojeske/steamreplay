@@ -1,8 +1,9 @@
 [package]
 name = "steamreplay"
 version = "0.1.0"
-description = "Browse Steam game recordings"
+description = "Find and export the loud moments in Steam game recordings"
 authors = ["Nico Jeske"]
+license = "GPL-3.0-only"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -43,6 +44,10 @@ tokio-util = "0.7.20"
 lru = "0.18.5"
 which = "8.0.6"
 sha1_smol = { version = "1.0.1", features = ["std"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

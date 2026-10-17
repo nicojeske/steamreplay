@@ -27,6 +27,7 @@ import {
 } from "../lib/exportPresets";
 import { dialogOpen, isTyping } from "../lib/keys";
 import { useView } from "../state/view";
+import { useExportBusy } from "../state/exportBusy";
 import { PathActions } from "./PathActions";
 
 type Props = { id: string; video: StreamInfo | null; onError: (e: unknown) => void };
@@ -202,6 +203,13 @@ export function ExportPanel({ id, video, onError }: Props) {
         }
       });
   }, [id, next]);
+
+  // The updater waits for the queue to empty before it installs.
+  const busy = jobs.some((j) => j.status.kind === "queued" || j.status.kind === "running");
+  useEffect(() => {
+    useExportBusy.setState({ busy });
+  }, [busy]);
+  useEffect(() => () => useExportBusy.setState({ busy: false }), []);
 
   // Leaving the session cancels its exports.
   const jobsRef = useRef(jobs);

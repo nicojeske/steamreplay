@@ -44,6 +44,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::remove_recent_export,
         commands::get_cache_sizes,
         commands::clear_caches,
+        commands::updater_supported,
     ])
 }
 
@@ -73,8 +74,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_process::init())
         .manage(media::MediaState::default())
         .setup(|app| {
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             app.manage(commands::init_preview(app.handle())?);
             commands::clean_export_cache(app.handle());
             Ok(())
