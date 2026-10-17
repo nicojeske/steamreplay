@@ -163,7 +163,7 @@ A teammate downloads one installer from the GitHub Releases page, installs it wi
 - **Windows:** a teammate runs `docs/windows-test.md`.
 
 ## 8. Open questions / risks
-- **WebKitGTK in an AppImage on Arch/NVIDIA** often shows a blank window or crashes with DMA-BUF. `main.rs` already sets `WEBKIT_DISABLE_DMABUF_RENDERER=1`. Still check that the bundled GStreamer plugins play the MSE preview. The AppImage is built on Ubuntu 22.04, which has an older GStreamer than CachyOS.
+- **WebKitGTK in an AppImage on Arch/NVIDIA** often shows a blank window or crashes with DMA-BUF. `main.rs` sets `__NV_DISABLE_EXPLICIT_SYNC=1` on NVIDIA + Wayland and `WEBKIT_DISABLE_DMABUF_RENDERER=1` otherwise (see 11 §8). This was only verified with the system WebKitGTK 2.54; the AppImage's older bundled WebKitGTK may still need `WEBKIT_DISABLE_DMABUF_RENDERER=1`. Still check that the bundled GStreamer plugins play the MSE preview. The AppImage is built on Ubuntu 22.04, which has an older GStreamer than CachyOS.
 - **SmartScreen reputation:** unsigned builds warn on every new version until they build up reputation. If the team gets annoyed, look at Azure Trusted Signing (about $10/month), using the CI hook from 4.5.
 - **`tauri-action` and the `../package.json` version path:** check that the action reads the resolved version. If not, keep the version in `tauri.conf.json` and let `pnpm bump` update it too.
 - **Public repo:** decided. Redact and rewrite history, see §2.

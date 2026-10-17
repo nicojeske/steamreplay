@@ -38,7 +38,7 @@ chmod +x SteamReplay_*.AppImage
 
 - It needs a system **ffmpeg** with HEVC, AAC and libx264 (most distro builds have them). The AppImage does not include ffmpeg.
 - Without FUSE, run it with `--appimage-extract-and-run`.
-- On NVIDIA, the app sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` by itself to avoid a blank window.
+- On NVIDIA + Wayland, the app sets `__NV_DISABLE_EXPLICIT_SYNC=1` by itself (avoids the `Error 71` crash and keeps hardware compositing). Elsewhere it sets `WEBKIT_DISABLE_DMABUF_RENDERER=1`. If the window is blank or flickers, start it with `WEBKIT_DISABLE_DMABUF_RENDERER=1`.
 - The AppImage updates itself like the Windows build. A `.deb` built from source does not.
 
 ## Where files go
