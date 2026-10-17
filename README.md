@@ -3,7 +3,7 @@
 Finds the good moments in your **Steam Game Recording** background recordings and exports them as MP4 clips.
 
 - A library of Steam's background recordings and saved clips, with thumbnails, search and game groups.
-- An editor-style workspace: a large video preview with volume control, the audio waveform with Steam's markers across the bottom (hover it to see the video at that point), and the loud parts (laughing, shouting, cheering) ranked in a side panel. Detection can be tuned per game.
+- An editor-style workspace: a large video preview with volume control, the audio waveform with Steam's markers across the bottom (hover it to see the video at that point), and the moments where people laugh ranked in a side panel (found by a small audio model that runs offline, M15; the loud parts are the fallback). Detection can be tuned per game.
 - Set in and out points and export either **fast** (stream copy, cut on 3 s chunk boundaries) or **precise** (frame-accurate re-encode to H.264, HEVC or AV1, with size presets such as Discord). Exports run in the background while you keep browsing.
 - Keyboard-driven (`?` lists every shortcut), with dark and light themes.
 
@@ -61,6 +61,7 @@ You need Rust (stable), Node (LTS), pnpm and the [Tauri prerequisites](https://t
 ```sh
 pnpm install
 pnpm fetch-ffmpeg     # Windows only: downloads the bundled ffmpeg sidecar
+pnpm fetch-model      # the laughter model (needs `gh auth login` or GH_TOKEN: the repo is private)
 pnpm tauri dev
 ```
 
@@ -72,7 +73,7 @@ pnpm lint
 pnpm tsc --noEmit
 ```
 
-`cargo test` regenerates `src/bindings.ts`. Commit it when it changes.
+Without the model, the app falls back to loud moments and the model tests are skipped. `cargo test` regenerates `src/bindings.ts`. Commit it when it changes.
 
 Every push to `main` builds the Windows installer and the Linux bundles as workflow artifacts (`.github/workflows/build.yml`).
 

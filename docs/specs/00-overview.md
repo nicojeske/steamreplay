@@ -1,6 +1,6 @@
 # SteamReplay: overview
 
-> Read this first. Each milestone spec (`01`–`13`, no `07`) assumes you know this file.
+> Read this first. Each milestone spec (`01`–`15`, no `07`) assumes you know this file.
 
 ## Context and goals
 The team records gameplay with **Steam Game Recording** in background mode. Today the only way to find good moments is manual markers. Most good moments are loud: people laughing, shouting or cheering.
@@ -11,7 +11,7 @@ SteamReplay is a small desktop tool that:
 3. shows Steam's own markers on the same timeline,
 4. lets you preview the video, set in and out points, and export an MP4 clip.
 
-**Constraints:** typed languages only (no Python). Small, local and offline. The one exception is throwaway research under `experiments/` (M14), which never ships.
+**Constraints:** typed languages only (no Python). Small, local and offline. The one exception is throwaway research under `experiments/` (M14), which never ships. The laughter model (M15) runs in Rust; Python only exported it.
 
 **Platforms:** **Windows is the main target**, because the teammates who will use the tool are on Windows. Development happens on Linux (CachyOS), which must work too. Because of this:
 - Every milestone ships a Windows build that a teammate can run. The CI workflow in M1 builds it.
@@ -183,6 +183,7 @@ steamreplay/
 | `media/export.rs` | Fast export (stream copy, snapped to 3 s) in M3; precise export (re-encode) in M5 | M3, M5 |
 | `media/encoders.rs` | Cached encoder/hwaccel capabilities, encoder choice and rate control for precise export | M5 |
 | `media/chunks.rs` | Chunk file names, `read_files`, `probe_start` (used by audio, preview and export) | M4 (moved from `audio.rs`) |
+| `media/laughter/` | Laughter detection: Rust mel front-end, EfficientAT `mn10_as` (ONNX in `tract`), streaming 32 kHz windows, 1 Hz curve, regions, cache | M15 |
 | `media/preview/` | Raw chunk serving for the original video (M11); 12 s H.264 fallback segments, backend detection, LRU disk cache, `replay://` protocol | M4, M11 |
 
 ### Cross-cutting rules
@@ -212,5 +213,6 @@ steamreplay/
 | 12 | [12-fireshare-connect.md](12-fireshare-connect.md) | Connect to Fireshare in the browser (Discord login works); no hand-made upload token |
 | 13 | [13-volume-hover-frames.md](13-volume-hover-frames.md) | Volume and mute in the transport; video frames when hovering the timeline |
 | 14 | [14-ml-moments.md](14-ml-moments.md) | Experiments: which ML model finds voice reactions best (labelling mode, Python harness, results) |
+| 15 | [15-laughter.md](15-laughter.md) | The Moments tab ranks laughs (EfficientAT `mn10_as` in pure Rust, bundled model); loudness is the fallback |
 
-**Build order: 01 → 02 → 04 → 03 → 05 → 06 → 08 → 09 → 10 → 11 → 13.** M4 (preview) comes before M3 (export): choosing in and out points makes much more sense when you can see the video. The file numbers were kept, so the M3/M4 labels in the specs still refer to the files.
+**Build order: 01 → 02 → 04 → 03 → 05 → 06 → 08 → 09 → 10 → 11 → 13 → 12 → 14 → 15.** M4 (preview) comes before M3 (export): choosing in and out points makes much more sense when you can see the video. The file numbers were kept, so the M3/M4 labels in the specs still refer to the files.
