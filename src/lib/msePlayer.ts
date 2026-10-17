@@ -11,6 +11,8 @@ const KEEP_BEHIND_S = 60;
  */
 const MAX_GAP_JUMP_S = 3;
 
+const isQuota = (e: unknown) => e instanceof DOMException && e.name === "QuotaExceededError";
+
 export type PlayerStatus = { kind: "idle" } | { kind: "loading" } | { kind: "error"; message: string };
 
 /** What the player appends. Segment `s` covers video time `[s·segS, (s+1)·segS)`. */
@@ -98,6 +100,8 @@ export class MsePlayer {
   /** Play again once the target is loaded (a new MediaSource starts paused). */
   private resume = false;
   private recovered = false;
+  /** A full SourceBuffer already caused a reload since the last successful append. */
+  private quotaReloaded = false;
   private destroyed = false;
   private failedSegment: number | null = null;
 
@@ -361,18 +365,30 @@ export class MsePlayer {
       try {
         await this.op(sb, () => sb.appendBuffer(d));
       } catch (e) {
-        if (!(e instanceof DOMException && e.name === "QuotaExceededError")) throw e;
-        // Full: drop everything well behind the playhead and try once more.
-        const cut = this.video.currentTime - 5;
-        if (cut > 0) await this.op(sb, () => sb.remove(0, cut));
+        if (!isQuota(e)) throw e;
+        // Full: drop everything well behind where we are going and try once more. Right after a
+        // far seek `currentTime` is still 0 in the fresh MediaSource, so the target counts.
+        const cut = Math.min(this.target ?? this.video.currentTime, s * this.segS) - 5;
+        if (cut > 0 && sb.buffered.length > 0 && sb.buffered.start(0) < cut) await this.op(sb, () => sb.remove(0, cut));
         this.check(gen);
-        await this.op(sb, () => sb.appendBuffer(d));
+        try {
+          await this.op(sb, () => sb.appendBuffer(d));
+        } catch (e2) {
+          // Still full: WebKitGTK had not freed the earlier MediaSources yet (many quick jumps,
+          // e.g. while labelling). Start a fresh one at the same place, once.
+          if (!isQuota(e2) || this.quotaReloaded) throw e2;
+          console.warn("preview: SourceBuffer full; reloading");
+          this.quotaReloaded = true;
+          this.reload(this.target ?? s * this.segS);
+          throw new Stale();
+        }
       }
       this.check(gen);
     }
     this.next = s + 1;
     this.failedSegment = null;
     this.recovered = false;
+    this.quotaReloaded = false;
     if (this.next >= this.count && this.ms?.readyState === "open") {
       await Promise.all(this.sbs.map((sb) => this.waitIdle(sb)));
       this.ms.endOfStream();
@@ -449,13 +465,17 @@ export class MsePlayer {
     }
     console.warn(`preview: ${message}; reloading`);
     this.recovered = true;
-    const t = this.target ?? this.video.currentTime;
-    // No "pause" event comes before the error, so this is still what the user wanted.
+    this.reload(this.target ?? this.video.currentTime);
+  };
+
+  /** A new MediaSource, continuing at `t` (and playing on if it was playing). */
+  private reload(t: number) {
+    // No "pause" event comes before an error, so this is still what the user wanted.
     this.resume = this.resume || !this.video.paused;
     this.generation++;
     this.fetchCtl?.abort();
     this.loadingNext = false;
     this.open();
     this.seek(t);
-  };
+  }
 }
