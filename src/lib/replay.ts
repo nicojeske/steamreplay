@@ -17,3 +17,8 @@ export function chunkUrl(id: string, kind: "v" | "a", chunk: number | "init"): s
 export function thumbnailUrl(id: string): string {
   return `${BASE}thumb/${encodeURIComponent(id)}.jpg`;
 }
+
+/** URL of the hover frame of chunk index `k` (from video time 0) of an open session (`media/thumbs.rs`). */
+export function frameUrl(id: string, k: number): string {
+  return `${BASE}frame/${encodeURIComponent(id)}/${k}.jpg`;
+}

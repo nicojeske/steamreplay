@@ -3,7 +3,7 @@
 Finds the good moments in your **Steam Game Recording** background recordings and exports them as MP4 clips.
 
 - A library of Steam's background recordings and saved clips, with thumbnails, search and game groups.
-- An editor-style workspace: a large video preview, the audio waveform with Steam's markers across the bottom, and the loud parts (laughing, shouting, cheering) ranked in a side panel. Detection can be tuned per game.
+- An editor-style workspace: a large video preview with volume control, the audio waveform with Steam's markers across the bottom (hover it to see the video at that point), and the loud parts (laughing, shouting, cheering) ranked in a side panel. Detection can be tuned per game.
 - Set in and out points and export either **fast** (stream copy, cut on 3 s chunk boundaries) or **precise** (frame-accurate re-encode to H.264, HEVC or AV1, with size presets such as Discord). Exports run in the background while you keep browsing.
 - Keyboard-driven (`?` lists every shortcut), with dark and light themes.
 

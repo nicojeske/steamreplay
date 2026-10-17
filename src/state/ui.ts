@@ -22,6 +22,9 @@ type Prefs = {
   loudnessLane: boolean;
   momentsFilter: MomentsFilter;
   momentsSort: MomentsSort;
+  /** Preview volume, 0–1 on the slider (the video gets its square). */
+  volume: number;
+  muted: boolean;
 };
 
 type UiState = Prefs & {
@@ -51,6 +54,8 @@ const DEFAULTS: Prefs = {
   loudnessLane: false,
   momentsFilter: "all",
   momentsSort: "rank",
+  volume: 1,
+  muted: false,
 };
 
 function load(): Prefs {

@@ -17,6 +17,7 @@ const DEFS = [
   { id: "pause", keys: "K", action: "Pause", group: "Playback", match: plain("k") },
   { id: "playForward", keys: "L", action: "Play; again for faster (1×, 2×, 4×)", group: "Playback", match: plain("l") },
   { id: "playBackward", keys: "J", action: "Play backwards; again for faster", group: "Playback", match: plain("j") },
+  { id: "mute", keys: "M", action: "Mute / unmute", group: "Playback", match: plain("m") },
   { id: "back1", keys: "←", action: "Back 1 s", group: "Navigation", match: plain("arrowleft") },
   { id: "forward1", keys: "→", action: "Forward 1 s", group: "Navigation", match: plain("arrowright") },
   { id: "back5", keys: "Shift+←", action: "Back 5 s", group: "Navigation", match: plain("arrowleft", true) },

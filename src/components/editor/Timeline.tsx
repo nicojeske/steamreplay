@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Gap, Marker, Spike } from "../../bindings";
 import { formatTimecode } from "../../lib/format";
+import { useHoverFrame } from "../../lib/hoverFrames";
 import { snapSelection } from "../../lib/selection";
 import type { WaveformTiles } from "../../lib/waveform";
 import { onThemeChange } from "../../state/ui";
 import { useView, zoomToRange } from "../../state/view";
 
 type Props = {
+  /** Session id, for the hover frames. */
+  id: string;
   tiles: WaveformTiles;
   spikes: Spike[];
   markers: Marker[];
@@ -55,7 +58,8 @@ function markerColor(kind: string, c: Colors): string {
   return c.clip;
 }
 
-type Hover = { x: number; y: number; text: string } | null;
+/** The pointer over the timeline: the time under it, and the marker or spike text, if any. */
+type Hover = { x: number; y: number; t: number; text: string | null } | null;
 
 type Drag =
   | { kind: "main"; startX: number; startView: [number, number]; moved: boolean }
@@ -63,12 +67,14 @@ type Drag =
   /** Shift+drag makes a new selection; dragging an edge moves it. `anchorS` is the fixed end. */
   | { kind: "select"; anchorS: number };
 
-export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
+export function Timeline({ id, tiles, spikes, markers, gaps, segS }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(0);
   const [height, setHeight] = useState(MAIN_TOP + 150);
   const [hover, setHover] = useState<Hover>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const hoverFrame = useHoverFrame(id, hover?.t ?? null, segS);
   const drag = useRef<Drag | null>(null);
   const frame = useRef(0);
   // Kept in refs so the draw function and native listeners always see current values.
@@ -294,6 +300,7 @@ export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
     if (!canvas) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      setHover(null);
       const { viewStartS, viewEndS, setView } = useView.getState();
       const w = Math.max(1, props.current.width);
       const span = viewEndS - viewStartS;
@@ -363,13 +370,17 @@ export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
     const w = Math.max(1, props.current.width);
     const { durationS, setView, viewStartS, viewEndS } = useView.getState();
     if (d?.kind === "overview") {
+      setHover(null);
       const t = (x / w) * durationS;
       const span = viewEndS - viewStartS;
       setView(t - d.grabOffsetS, t - d.grabOffsetS + span);
       return;
     }
     if (d?.kind === "select") {
-      useView.getState().setSelection(d.anchorS, timeAtX(x));
+      // The frame at the moving edge, to place it precisely.
+      const t = timeAtX(x);
+      useView.getState().setSelection(d.anchorS, t);
+      setHover({ x, y: localY(e), t: Math.min(Math.max(0, t), durationS), text: null });
       return;
     }
     if (d?.kind === "main") {
@@ -378,18 +389,20 @@ export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
         d.moved = true;
       }
       if (d.moved) {
+        setHover(null);
         const [s0, s1] = d.startView;
         const dt = ((d.startX - x) / w) * (s1 - s0);
         setView(s0 + dt, s1 + dt);
       }
       return;
     }
-    // Hover: selection edges, marker flags and spike bands.
+    // Hover: the frame under the pointer, selection edges, marker flags and spike bands.
     const y = localY(e);
     e.currentTarget.style.cursor = edgeAt(x, y) !== null ? "ew-resize" : "";
+    const hoverT = y < OVERVIEW_H ? (x / w) * durationS : timeAtX(x);
     let text: string | null = null;
     if (y >= OVERVIEW_H + RULER_H) {
-      const t = timeAtX(x);
+      const t = hoverT;
       const pxS = (viewEndS - viewStartS) / w;
       const m = props.current.markers.find((mk) => Math.abs(mk.videoTimeS - t) <= 5 * pxS);
       if (m) {
@@ -402,7 +415,7 @@ export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
         }
       }
     }
-    setHover(text ? { x, y, text } : null);
+    setHover(durationS > 0 ? { x, y, t: Math.min(Math.max(0, hoverT), durationS), text } : null);
   };
 
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -415,6 +428,18 @@ export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
       if (inS !== null && outS !== null && outS - inS < 0.05) clearSelection();
     }
   };
+
+  /** Puts the hover card above the pointer (below it near the top), centred and inside the timeline. */
+  const placeCard = () => {
+    const card = cardRef.current;
+    if (!card || !hover) return;
+    const { offsetWidth: cw, offsetHeight: ch } = card;
+    const left = Math.min(Math.max(4, hover.x - cw / 2), Math.max(4, width - cw - 4));
+    const top = hover.y - ch - 12 >= 4 ? hover.y - ch - 12 : hover.y + 16;
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
+  };
+  useLayoutEffect(placeCard);
 
   const onDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (localY(e) < OVERVIEW_H) return;
@@ -439,8 +464,12 @@ export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
         onDoubleClick={onDoubleClick}
       />
       {hover && (
-        <div className="timeline-tip" style={{ left: Math.min(hover.x + 12, Math.max(0, width - 260)), top: hover.y > height - 40 ? hover.y - 30 : hover.y + 14 }}>
-          {hover.text}
+        <div className="timeline-frame" ref={cardRef}>
+          {hoverFrame && <img src={hoverFrame.src} alt="" className={hoverFrame.exact ? undefined : "stale"} onLoad={placeCard} />}
+          <div className="timeline-frame-text">
+            <span className="mono">{formatTimecode(hover.t, 1)}</span>
+            {hover.text && <span className="truncate">{hover.text}</span>}
+          </div>
         </div>
       )}
     </div>

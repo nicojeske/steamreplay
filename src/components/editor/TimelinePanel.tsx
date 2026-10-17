@@ -76,7 +76,7 @@ export function TimelinePanel({ detail, analysis }: { detail: SessionDetail; ana
 
       {ready ? (
         <div className="timeline-body">
-          <Timeline tiles={tiles} spikes={spikes} markers={detail.markers} gaps={status.meta.gaps} segS={segS} />
+          <Timeline id={detail.summary.id} tiles={tiles} spikes={spikes} markers={detail.markers} gaps={status.meta.gaps} segS={segS} />
           {lane && <LoudnessLane tiles={tiles} thresholdDb={params.thresholdDb} spikes={spikes} />}
         </div>
       ) : (

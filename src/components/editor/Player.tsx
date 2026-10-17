@@ -4,6 +4,7 @@ import { commands, type PreviewInfo } from "../../bindings";
 import { errorMessage, unwrap } from "../../lib/ipc";
 import { canPlayOriginal, MsePlayer, originalSource, transcodeSource, type PlayerStatus } from "../../lib/msePlayer";
 import { useShortcut } from "../../lib/shortcuts";
+import { useUi } from "../../state/ui";
 import { followPlayhead, useView } from "../../state/view";
 import { Button } from "../ui/Button";
 import { Spinner } from "../ui/misc";
@@ -96,6 +97,21 @@ export function Player({ id, onInfo }: Props) {
       void commands.previewClose(id);
     };
   }, [id, attempt]);
+
+  // Volume and mute from the transport. Properties of the element, so they survive a new MsePlayer.
+  useEffect(() => {
+    const apply = ({ volume, muted }: { volume: number; muted: boolean }) => {
+      const video = videoRef.current;
+      if (!video) return;
+      // Squared: a linear slider spends most of its travel on barely audible changes.
+      video.volume = Math.min(1, Math.max(0, volume)) ** 2;
+      video.muted = muted;
+    };
+    apply(useUi.getState());
+    return useUi.subscribe((s, prev) => {
+      if (s.volume !== prev.volume || s.muted !== prev.muted) apply(s);
+    });
+  }, []);
 
   // Seeks from the timeline, the moments list and keys.
   useEffect(

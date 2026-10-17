@@ -989,6 +989,16 @@ pub async fn thumbnail(app: &AppHandle, id: String) -> AppResult<PathBuf> {
     thumbs::create(&paths, &dir, &detail).await
 }
 
+/// The hover frame of chunk index `k` of an open preview session, for the `replay://` protocol.
+pub async fn hover_frame(app: &AppHandle, id: &str, k: u32) -> AppResult<PathBuf> {
+    let session = app
+        .state::<PreviewState>()
+        .get(id)
+        .ok_or_else(|| AppError::NotFound(format!("preview of {id} is not open")))?;
+    let dir = cache_root(app)?.join("thumbs");
+    thumbs::frame(session.paths(), &dir, id, session.dir(), &session.inv, k).await
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CacheSizes {

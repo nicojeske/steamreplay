@@ -9,12 +9,17 @@ import {
   Rewind,
   FastForward,
   SquarePlay,
+  Volume1,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 import { formatTimecode } from "../../lib/format";
 import { useShortcut } from "../../lib/shortcuts";
+import { useUi } from "../../state/ui";
 import { playSelection, useView } from "../../state/view";
 import { IconButton } from "../ui/Button";
+import { Slider } from "../ui/Slider";
 import { Tip } from "../ui/Tooltip";
 
 type Props = {
@@ -73,6 +78,7 @@ export function Transport({ ready, playing, rateLabel, onTogglePlay, onJump, onF
             {rateLabel}
           </button>
         </Tip>
+        <Volume />
       </div>
 
       <div className="transport-group selection-group">
@@ -99,6 +105,35 @@ export function Transport({ ready, playing, rateLabel, onTogglePlay, onJump, onF
           disabled={!hasSelection}
           onClick={() => useView.getState().clearSelection()}
         />
+      </div>
+    </div>
+  );
+}
+
+const toggleMute = () => {
+  const { muted, volume, set } = useUi.getState();
+  // Unmuting at volume 0 would stay silent; come back at a usable level instead.
+  set(muted || volume === 0 ? { muted: false, volume: volume === 0 ? 0.5 : volume } : { muted: true });
+};
+
+/** Mute button and volume slider. Saved on this machine (`state/ui.ts`). */
+function Volume() {
+  const volume = useUi((s) => s.volume);
+  const muted = useUi((s) => s.muted);
+  useShortcut("mute", toggleMute);
+  const silent = muted || volume === 0;
+  const icon = silent ? <VolumeX size={17} /> : volume < 0.5 ? <Volume1 size={17} /> : <Volume2 size={17} />;
+  const setVolume = (v: number) => useUi.getState().set({ volume: Math.min(1, Math.max(0, v)), muted: false });
+  return (
+    <div className="volume">
+      <IconButton label={silent ? "Unmute" : "Mute"} shortcut="mute" icon={icon} onClick={toggleMute} />
+      <div
+        className="volume-slider"
+        onWheel={(e) => {
+          if (e.deltaY !== 0) setVolume(useUi.getState().volume + (e.deltaY < 0 ? 0.05 : -0.05));
+        }}
+      >
+        <Slider label="Volume" value={silent ? 0 : Math.round(volume * 100)} min={0} max={100} onChange={(v) => setVolume(v / 100)} />
       </div>
     </div>
   );

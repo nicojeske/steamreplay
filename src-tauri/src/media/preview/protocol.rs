@@ -2,7 +2,9 @@
 //! - `replay://localhost/preview/<urlencoded id>/<s>.mp4`: segment `s` of an open preview session,
 //! - `replay://localhost/chunk/<urlencoded id>/<v|a>/<init|n>.m4s`: a raw Steam DASH file of an
 //!   open preview session (direct playback, M11),
-//! - `replay://localhost/thumb/<urlencoded id>.jpg`: the library thumbnail of a session (M9).
+//! - `replay://localhost/thumb/<urlencoded id>.jpg`: the library thumbnail of a session (M9),
+//! - `replay://localhost/frame/<urlencoded id>/<k>.jpg`: the hover frame of chunk index `k` of an
+//!   open preview session (M13).
 
 use std::borrow::Cow;
 
@@ -96,11 +98,20 @@ fn error(status: StatusCode, message: String) -> Response<Cow<'static, [u8]>> {
 }
 
 async fn thumbnail(app: &AppHandle, id: String) -> Response<Cow<'static, [u8]>> {
-    let path = match crate::commands::thumbnail(app, id.clone()).await {
+    jpeg(&id, crate::commands::thumbnail(app, id.clone()).await).await
+}
+
+async fn frame(app: &AppHandle, id: String, k: u32) -> Response<Cow<'static, [u8]>> {
+    jpeg(&id, crate::commands::hover_frame(app, &id, k).await).await
+}
+
+/// A cached JPEG (thumbnail or hover frame), or the error that kept it from being made.
+async fn jpeg(id: &str, path: Result<std::path::PathBuf, AppError>) -> Response<Cow<'static, [u8]>> {
+    let path = match path {
         Ok(p) => p,
         Err(AppError::NotFound(m)) => return error(StatusCode::NOT_FOUND, m),
         Err(e) => {
-            log::info!("thumbnail of {id}: {e}");
+            log::info!("image of {id}: {e}");
             return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
         }
     };
@@ -146,6 +157,9 @@ async fn chunk(app: &AppHandle, request: &Request<Vec<u8>>, id: String, file: Ch
 pub async fn handle(app: &AppHandle, request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
     if let Some(id) = crate::media::thumbs::parse_path(request.uri().path()) {
         return thumbnail(app, id).await;
+    }
+    if let Some((id, k)) = crate::media::thumbs::parse_frame_path(request.uri().path()) {
+        return frame(app, id, k).await;
     }
     if let Some((id, file)) = parse_chunk_path(request.uri().path()) {
         return chunk(app, &request, id, file).await;

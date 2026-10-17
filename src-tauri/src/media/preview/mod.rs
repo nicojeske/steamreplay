@@ -258,6 +258,11 @@ impl PreviewSession {
         &self.dir
     }
 
+    /// The ffmpeg this session transcodes with (also used for hover frames).
+    pub fn paths(&self) -> &FfmpegPaths {
+        &self.paths
+    }
+
     pub fn info(&self) -> PreviewInfo {
         PreviewInfo {
             segment_s: self.segment_s,
