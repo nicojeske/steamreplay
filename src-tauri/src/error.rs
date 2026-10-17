@@ -17,6 +17,9 @@ pub enum AppError {
     Ffmpeg(String),
     #[error("{0}")]
     Fireshare(String),
+    /// The laughter model is missing or failed (M15).
+    #[error("{0}")]
+    Model(String),
     #[error("cancelled")]
     Cancelled,
 }
@@ -30,6 +33,7 @@ pub enum AppErrorKind {
     Store,
     Ffmpeg,
     Fireshare,
+    Model,
     Cancelled,
 }
 
@@ -53,6 +57,7 @@ impl AppError {
             Self::Store(_) => AppErrorKind::Store,
             Self::Ffmpeg(_) => AppErrorKind::Ffmpeg,
             Self::Fireshare(_) => AppErrorKind::Fireshare,
+            Self::Model(_) => AppErrorKind::Model,
             Self::Cancelled => AppErrorKind::Cancelled,
         };
         AppErrorPayload { kind, message: self.to_string() }

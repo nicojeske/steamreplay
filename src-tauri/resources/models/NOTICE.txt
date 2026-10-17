@@ -1,0 +1,7 @@
+SteamReplay includes mn10_as.onnx, the EfficientAT "mn10_as" audio tagging model by Florian Schmid
+(https://github.com/fschmid56/EfficientAT), exported to ONNX without its mel front-end. It finds
+laughter in the recordings' audio (M15).
+
+The EfficientAT code and pre-trained weights are licensed under the MIT License; the full text is
+in LICENSE-EfficientAT.txt next to this file. The weights were trained on AudioSet
+(https://research.google.com/audioset/).

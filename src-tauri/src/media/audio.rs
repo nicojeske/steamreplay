@@ -12,6 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 use specta::Type;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::process::ChildStdout;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::chunks::{AUDIO_INIT, VIDEO_INIT, audio_chunk, probe_start, video_chunk};
@@ -161,9 +164,60 @@ impl Sink for RawSamples {
     }
 }
 
-/// Decodes one run to mono at `rate`. `written` counts bytes fed to ffmpeg for progress.
+/// Reads ffmpeg's f32le output into a sink.
+async fn read_into<S: Sink>(mut stdout: ChildStdout) -> std::io::Result<S::Out> {
+    let mut sink = S::default();
+    let mut buf = vec![0u8; 1 << 16];
+    let mut carry = 0usize;
+    loop {
+        let n = stdout.read(&mut buf[carry..]).await?;
+        if n == 0 {
+            break;
+        }
+        let len = carry + n;
+        let whole = len - len % 4;
+        for b in buf[..whole].as_chunks::<4>().0 {
+            sink.push(f32::from_le_bytes(*b));
+        }
+        buf.copy_within(whole..len, 0);
+        carry = len - whole;
+    }
+    Ok(sink.finish())
+}
+
+/// What [`stream_placed`] sends: where the next run starts, then its samples in blocks.
+#[derive(Debug)]
+pub enum Block {
+    /// The next samples start at this index (samples from video time 0; can be negative).
+    Run(i64),
+    Samples(Vec<f32>),
+}
+
+/// Reads ffmpeg's f32le output into blocks on `tx`. Waits while the receiver is busy.
+async fn read_to_channel(mut stdout: ChildStdout, tx: mpsc::Sender<Block>) -> std::io::Result<()> {
+    let mut buf = vec![0u8; 1 << 16];
+    let mut carry = 0usize;
+    loop {
+        let n = stdout.read(&mut buf[carry..]).await?;
+        if n == 0 {
+            return Ok(());
+        }
+        let len = carry + n;
+        let whole = len - len % 4;
+        let block = buf[..whole].as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
+        if tx.send(Block::Samples(block)).await.is_err() {
+            return Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the receiver stopped"));
+        }
+        buf.copy_within(whole..len, 0);
+        carry = len - whole;
+    }
+}
+
+/// Decodes one run to mono at `rate`, through the ffmpeg audio `filter` if any; `read` consumes
+/// ffmpeg's stdout. `written` counts bytes fed
+/// to ffmpeg for progress.
 #[allow(clippy::too_many_arguments)]
-async fn decode_run<S: Sink>(
+async fn decode_run<R: Send + 'static>(
     paths: &FfmpegPaths,
     dir: &Path,
     run: &Run,
@@ -172,9 +226,15 @@ async fn decode_run<S: Sink>(
     on_progress: ProgressFn,
     total_bytes: u64,
     cancel: &CancellationToken,
-) -> AppResult<S::Out> {
+    filter: Option<&str>,
+    read: impl FnOnce(ChildStdout) -> JoinHandle<std::io::Result<R>>,
+) -> AppResult<R> {
     let mut cmd = ffmpeg::ffmpeg_command(paths, false);
-    cmd.args(["-i", "pipe:0", "-map", "0:a:0", "-vn", "-ac", "1", "-ar"])
+    cmd.args(["-i", "pipe:0", "-map", "0:a:0", "-vn"]);
+    if let Some(f) = filter {
+        cmd.args(["-af", f]);
+    }
+    cmd.args(["-ac", "1", "-ar"])
         .arg(rate.to_string())
         .args(["-f", "f32le", "pipe:1"])
         .stdin(std::process::Stdio::piped());
@@ -203,26 +263,7 @@ async fn decode_run<S: Sink>(
         Ok::<_, AppError>(())
     });
 
-    let mut stdout = child.stdout.take().expect("stdout is piped");
-    let reader = tokio::spawn(async move {
-        let mut sink = S::default();
-        let mut buf = vec![0u8; 1 << 16];
-        let mut carry = 0usize;
-        loop {
-            let n = stdout.read(&mut buf[carry..]).await?;
-            if n == 0 {
-                break;
-            }
-            let len = carry + n;
-            let whole = len - len % 4;
-            for b in buf[..whole].as_chunks::<4>().0 {
-                sink.push(f32::from_le_bytes(*b));
-            }
-            buf.copy_within(whole..len, 0);
-            carry = len - whole;
-        }
-        Ok::<_, std::io::Error>(sink.finish())
-    });
+    let reader = read(child.stdout.take().expect("stdout is piped"));
     let stderr = ffmpeg::collect_stderr(child.stderr.take().expect("stderr is piped"), None);
 
     let status = ffmpeg::wait_or_kill(&mut child, cancel).await;
@@ -298,7 +339,7 @@ async fn run_starts(
 /// Decodes every run at `rate` and copies the output into a buffer of `total` items that starts
 /// at video time 0. `per_s` items make one second. Missing chunks stay `T::default()`.
 #[allow(clippy::too_many_arguments)]
-async fn decode_placed<S: Sink<Out = Vec<T>>, T: Copy + Default>(
+async fn decode_placed<S: Sink<Out = Vec<T>>, T: Copy + Default + Send + 'static>(
     paths: &FfmpegPaths,
     dir: &Path,
     inv: &ChunkInventory,
@@ -320,7 +361,7 @@ async fn decode_placed<S: Sink<Out = Vec<T>>, T: Copy + Default>(
     let written = Arc::new(AtomicU64::new(0));
     let mut out = vec![T::default(); total];
     for (run, start_s) in runs.iter().zip(starts) {
-        let items = decode_run::<S>(
+        let items = decode_run(
             paths,
             dir,
             run,
@@ -329,6 +370,8 @@ async fn decode_placed<S: Sink<Out = Vec<T>>, T: Copy + Default>(
             on_progress.clone(),
             total_bytes,
             cancel,
+            None,
+            |out| tokio::spawn(read_into::<S>(out)),
         )
         .await?;
         let offset = (start_s * per_s).round() as i64;
@@ -347,6 +390,53 @@ async fn decode_placed<S: Sink<Out = Vec<T>>, T: Copy + Default>(
     }
     on_progress(1.0);
     Ok((out, runs))
+}
+
+/// Like [`decode_placed`], but sends the samples to `tx` instead of collecting them: a
+/// [`Block::Run`] with each run's start index (samples at `rate` from video time 0), then its
+/// samples, through the ffmpeg audio `filter` if any. Memory stays small however long the session is. The receiver must keep reading until
+/// `tx` is dropped, or cancel `cancel` (ffmpeg then gets killed).
+#[allow(clippy::too_many_arguments)]
+pub async fn stream_placed(
+    paths: &FfmpegPaths,
+    dir: &Path,
+    inv: &ChunkInventory,
+    segment_s: f64,
+    rate: u32,
+    filter: Option<&str>,
+    tx: &mpsc::Sender<Block>,
+    cancel: &CancellationToken,
+) -> AppResult<()> {
+    let runs = plan_runs(dir, inv);
+    if runs.is_empty() {
+        return Err(AppError::NotFound(format!("no audio chunks in {}", dir.display())));
+    }
+    let starts = run_starts(paths, dir, inv, &runs, segment_s, cancel).await?;
+    for (run, start_s) in runs.iter().zip(starts) {
+        let at = (start_s * f64::from(rate)).round() as i64;
+        tx.send(Block::Run(at)).await.map_err(|_| AppError::Cancelled)?;
+        let tx = tx.clone();
+        decode_run(
+            paths,
+            dir,
+            run,
+            rate,
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(|_| {}),
+            1,
+            cancel,
+            filter,
+            |out| tokio::spawn(read_to_channel(out, tx)),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Number of samples at `rate` for the chunk range of the inventory (the length [`stream_placed`]
+/// and [`extract_samples`] cover).
+pub fn total_samples(inv: &ChunkInventory, segment_s: f64, rate: u32) -> usize {
+    if inv.count == 0 { 0 } else { (f64::from(inv.last - inv.first + 1) * segment_s * f64::from(rate)).round() as usize }
 }
 
 /// Decodes all audio of the inventory into level-0 bins that start at video time 0.
@@ -378,7 +468,7 @@ pub async fn extract_samples(
     cancel: &CancellationToken,
 ) -> AppResult<Vec<f32>> {
     let per_s = f64::from(rate);
-    let total = if inv.count == 0 { 0 } else { (f64::from(inv.last - inv.first + 1) * segment_s * per_s).round() as usize };
+    let total = total_samples(inv, segment_s, rate);
     let (samples, _) =
         decode_placed::<RawSamples, f32>(paths, dir, inv, segment_s, rate, (total, per_s), Arc::new(|_| {}), cancel).await?;
     Ok(samples)

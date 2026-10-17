@@ -6,6 +6,7 @@ pub mod encoders;
 pub mod export;
 pub mod preview;
 pub mod ffmpeg;
+pub mod laughter;
 pub mod pyramid;
 pub mod spikes;
 pub mod thumbs;
@@ -217,8 +218,14 @@ impl MediaState {
     }
 }
 
-fn segment_s(detail: &SessionDetail) -> f64 {
+pub fn segment_s(detail: &SessionDetail) -> f64 {
     detail.mpd.as_ref().map_or(DEFAULT_SEGMENT_S, |m| m.segment_duration_s)
+}
+
+/// Length of the session's chunk range in video time (what the waveform covers).
+pub fn duration_s(detail: &SessionDetail) -> f64 {
+    let c = &detail.chunks;
+    if c.count == 0 { 0.0 } else { f64::from(c.last - c.first + 1) * segment_s(detail) }
 }
 
 pub fn cache_file(cache_dir: &Path, detail: &SessionDetail) -> PathBuf {

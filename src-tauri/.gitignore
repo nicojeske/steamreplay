@@ -9,3 +9,5 @@
 # Windows ffmpeg sidecar, fetched by scripts/fetch-ffmpeg.ts
 /binaries/
 /resources/ffmpeg/LICENSE.txt
+/resources/models/mn10_as.onnx
+

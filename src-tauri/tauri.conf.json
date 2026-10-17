@@ -54,7 +54,10 @@
         "bundleMediaFramework": true
       }
     },
-    "license": "GPL-3.0-only"
+    "license": "GPL-3.0-only",
+    "resources": {
+      "resources/models/*": "models/"
+    }
   },
   "plugins": {
     "updater": {

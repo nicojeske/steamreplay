@@ -12,6 +12,7 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "fetch-ffmpeg": "node scripts/fetch-ffmpeg.ts",
+    "fetch-model": "node scripts/fetch-model.ts",
     "bump": "node scripts/bump.ts"
   },
   "dependencies": {

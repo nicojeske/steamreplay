@@ -55,6 +55,15 @@ jobs:
       - name: Fetch ffmpeg sidecar
         if: runner.os == 'Windows'
         run: pnpm fetch-ffmpeg
+      - name: Cache laughter model
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/resources/models/mn10_as.onnx
+          key: model-${{ hashFiles('scripts/fetch-model.ts') }}
+      - name: Fetch laughter model
+        run: pnpm fetch-model
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: cargo clippy
         working-directory: src-tauri

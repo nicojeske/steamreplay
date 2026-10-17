@@ -15,6 +15,12 @@ const HIST_MIN_DB: f32 = -100.0;
 const HIST_STEP_DB: f32 = 0.5;
 const HIST_BUCKETS: usize = 200;
 
+/// Default laughter threshold (M15, picked on the M14 sessions; see docs/specs/15-laughter.md §6).
+pub const DEFAULT_LAUGH_THRESHOLD: f32 = 0.01;
+/// The range of the laughter Sensitivity slider.
+pub const LAUGH_THRESHOLD_MIN: f32 = 0.0004;
+pub const LAUGH_THRESHOLD_MAX: f32 = 0.25;
+
 /// All tuning constants of the detector. The defaults are the spec's starting values
 /// (not yet tuned on real sessions).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -34,6 +40,9 @@ pub struct SpikeParams {
     #[specta(type = specta_typescript::Number)]
     pub pad_s: f32,
     pub max_results: u32,
+    /// Laughter probability a moment must exceed (M15). Merge gap, padding and max results are shared.
+    #[specta(type = specta_typescript::Number)]
+    pub laugh_threshold: f32,
 }
 
 impl Default for SpikeParams {
@@ -46,6 +55,7 @@ impl Default for SpikeParams {
             merge_gap_s: 5.0,
             pad_s: 1.5,
             max_results: 200,
+            laugh_threshold: DEFAULT_LAUGH_THRESHOLD,
         }
     }
 }
@@ -62,6 +72,11 @@ impl SpikeParams {
             merge_gap_s: f(self.merge_gap_s, 0.0, 20.0),
             pad_s: f(self.pad_s, 0.0, 5.0),
             max_results: self.max_results.clamp(1, 1000),
+            laugh_threshold: if self.laugh_threshold.is_finite() {
+                self.laugh_threshold.clamp(LAUGH_THRESHOLD_MIN, LAUGH_THRESHOLD_MAX)
+            } else {
+                DEFAULT_LAUGH_THRESHOLD
+            },
         }
     }
 }
@@ -529,6 +544,7 @@ mod tests {
             merge_gap_s: -3.0,
             pad_s: 99.0,
             max_results: 0,
+            laugh_threshold: 7.0,
         };
         let c = wild.clamped();
         assert_eq!(
@@ -541,6 +557,7 @@ mod tests {
                 merge_gap_s: 0.0,
                 pad_s: 5.0,
                 max_results: 1,
+                laugh_threshold: LAUGH_THRESHOLD_MAX,
             }
         );
         assert_eq!(SpikeParams::default().clamped(), SpikeParams::default());
@@ -558,6 +575,9 @@ mod tests {
         let p = params_from_json(serde_json::json!({ "thresholdDb": 7.5, "unknownField": 1 })).unwrap();
         assert_eq!(p, SpikeParams { threshold_db: 7.5, ..SpikeParams::default() });
         assert_eq!(params_from_json(serde_json::json!({ "thresholdDb": "loud" })), None);
+        // Presets saved before M15 get the default laughter threshold.
+        let old = params_from_json(serde_json::json!({ "thresholdDb": 7.5, "maxResults": 50 })).unwrap();
+        assert_eq!(old.laugh_threshold, DEFAULT_LAUGH_THRESHOLD);
         assert_eq!(params_from_json(serde_json::json!(3)), None);
     }
 

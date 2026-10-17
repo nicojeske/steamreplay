@@ -117,10 +117,16 @@ pub fn load(path: &Path) -> Option<Vec<Bin>> {
 
 /// Writes atomically (temp file + rename) and removes stale files of the same session.
 pub fn save(path: &Path, level0: &[Bin]) -> AppResult<()> {
+    write_cache(path, &encode(level0))
+}
+
+/// Writes a cache file atomically (temp file + rename) and removes the other `<stem>-*.bin` files
+/// of the same session next to it. Shared with the laughter cache.
+pub fn write_cache(path: &Path, data: &[u8]) -> AppResult<()> {
     let dir = path.parent().ok_or_else(|| AppError::Io(format!("bad cache path {}", path.display())))?;
     std::fs::create_dir_all(dir).map_err(|e| AppError::io(dir.display(), e))?;
     let tmp = path.with_extension("tmp");
-    let result = std::fs::write(&tmp, encode(level0)).and_then(|()| std::fs::rename(&tmp, path));
+    let result = std::fs::write(&tmp, data).and_then(|()| std::fs::rename(&tmp, path));
     if let Err(e) = result {
         let _ = std::fs::remove_file(&tmp);
         return Err(AppError::io(path.display(), e));

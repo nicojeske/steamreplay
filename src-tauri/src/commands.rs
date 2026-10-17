@@ -22,6 +22,7 @@ use crate::media::encoders::{self, Capabilities, VideoCodec};
 use crate::media::export::{
     self, ExportMode, ExportModeKind, ExportPrefs, ExportRequest, ExportResult, RecentEntry, RecentExport, Snap,
 };
+use crate::media::laughter::{self, LaughState};
 use crate::media::{self, Analysis, MediaState, Progress, WaveformMeta, chunks, thumbs};
 use crate::steam::locate::{self, RootCheck, SteamAccount};
 use crate::steam::recordings::{self, SessionDetail, SessionSummary};
@@ -294,6 +295,127 @@ pub async fn get_loudness(
         Ok(Samples(spikes::loudness_slice(&c, level.into(), start_bin as usize, count as usize)))
     })
     .await
+}
+
+// --- laughter (M15) -------------------------------------------------------------------------------
+
+fn laughter_cache_dir(app: &AppHandle) -> AppResult<PathBuf> {
+    Ok(cache_root(app)?.join("laughter"))
+}
+
+/// The bundled model: `resources/models/` in the source tree, `models/` in the resource folder.
+fn laughter_model(app: &AppHandle, laugh: &LaughState) -> AppResult<Arc<laughter::model::Model>> {
+    let path = app
+        .path()
+        .resolve("models/mn10_as.onnx", tauri::path::BaseDirectory::Resource)
+        .map_err(|e| AppError::Model(format!("no resource folder: {e}")))?;
+    laugh.model(&path)
+}
+
+fn laughs_from_cache(app: &AppHandle, detail: &SessionDetail) -> AppResult<Option<laughter::Laughs>> {
+    let (first, last) = (detail.chunks.first, detail.chunks.last);
+    let path = laughter::cache_path(&laughter_cache_dir(app)?, &detail.summary.id, first, last);
+    Ok(laughter::load(&path).map(|curve| laughter::Laughs { curve, duration_s: media::duration_s(detail), first, last }))
+}
+
+/// The loaded laughter curve, or the one in the disk cache. Never runs the model.
+async fn laughs(app: &AppHandle, laugh: &LaughState, id: &str) -> AppResult<Arc<laughter::Laughs>> {
+    if let Some(l) = laugh.get(id, None) {
+        return Ok(l);
+    }
+    let (app, id_owned) = (app.clone(), id.to_owned());
+    let l = blocking(move || {
+        laughs_from_cache(&app, &session(&app, &id_owned)?)?
+            .ok_or_else(|| AppError::NotFound(format!("{id_owned} has no laughter analysis yet")))
+    })
+    .await?;
+    let l = Arc::new(l);
+    laugh.put(id, l.clone());
+    Ok(l)
+}
+
+/// Runs the laughter model over the session (or loads its cached curve). Start it after
+/// `analyze_audio`; `job_id` works with `cancel_job` like the other jobs. Fails with kind `model`
+/// when the model is missing or broken: the UI then stays with the loud moments.
+#[tauri::command]
+#[specta::specta]
+pub async fn analyze_laughter(
+    app: AppHandle,
+    state: State<'_, MediaState>,
+    laugh: State<'_, LaughState>,
+    id: String,
+    job_id: String,
+    progress: Channel<Progress>,
+) -> AppResult<()> {
+    let detail = {
+        let (app, id) = (app.clone(), id.clone());
+        blocking(move || session(&app, &id)).await?
+    };
+    let (first, last) = (detail.chunks.first, detail.chunks.last);
+    if laugh.get(&id, Some((first, last))).is_some() {
+        return Ok(());
+    }
+    let cached = {
+        let (app, d) = (app.clone(), detail.clone());
+        blocking(move || laughs_from_cache(&app, &d)).await?
+    };
+    if let Some(l) = cached {
+        laugh.put(&id, Arc::new(l));
+        return Ok(());
+    }
+    let model = {
+        let (app, laugh) = (app.clone(), laugh.inner().clone());
+        blocking(move || laughter_model(&app, &laugh)).await?
+    };
+    let paths = ffmpeg_paths(&app, &state).await?;
+    let job = state.start_job(&job_id);
+    let on_progress: ffmpeg::ProgressFn = Arc::new(move |fraction| {
+        let _ = progress.send(Progress { fraction });
+    });
+    let t = std::time::Instant::now();
+    let seg = media::segment_s(&detail);
+    let curve =
+        laughter::analyze(&paths, &detail.summary.dir, &detail.chunks, seg, model, on_progress, &job.token).await?;
+    let duration_s = media::duration_s(&detail);
+    log::info!(
+        "laughter analysis of {id}: {:.0} s of audio in {:.1} s",
+        duration_s,
+        t.elapsed().as_secs_f64()
+    );
+    let path = laughter::cache_path(&laughter_cache_dir(&app)?, &id, first, last);
+    let l = Arc::new(laughter::Laughs { curve, duration_s, first, last });
+    let saved = l.clone();
+    blocking(move || {
+        if let Err(e) = laughter::save(&path, &saved.curve) {
+            log::warn!("could not write laughter cache: {e}");
+        }
+        Ok(())
+    })
+    .await?;
+    laugh.put(&id, l);
+    Ok(())
+}
+
+/// Laughs, best first, with the laughter threshold and the shared merge gap, padding and maximum
+/// of `params` (clamped).
+#[tauri::command]
+#[specta::specta]
+pub async fn get_laughs(
+    app: AppHandle,
+    laugh: State<'_, LaughState>,
+    id: String,
+    params: Option<SpikeParams>,
+) -> AppResult<Vec<Spike>> {
+    let l = laughs(&app, &laugh, &id).await?;
+    let p = params.unwrap_or_default().clamped();
+    Ok(laughter::regions(&l.curve, l.duration_s, p.laugh_threshold, p.merge_gap_s, p.pad_s, p.max_results as usize))
+}
+
+/// The whole laughter curve: one probability per second from video time 0.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_laugh_curve(app: AppHandle, laugh: State<'_, LaughState>, id: String) -> AppResult<Vec<f32>> {
+    Ok(laughs(&app, &laugh, &id).await?.curve.clone())
 }
 
 // --- spike presets (M6) ---------------------------------------------------------------------------
@@ -1155,7 +1277,7 @@ pub async fn get_cache_sizes(app: AppHandle) -> AppResult<CacheSizes> {
     let root = cache_root(&app)?;
     blocking(move || {
         Ok(CacheSizes {
-            waveform: dir_size(&root.join("waveform")),
+            waveform: dir_size(&root.join("waveform")) + dir_size(&root.join("laughter")),
             preview: dir_size(&root.join("preview")),
             export: dir_size(&root.join("export")),
             thumbs: dir_size(&root.join("thumbs")),
@@ -1171,6 +1293,7 @@ pub async fn get_cache_sizes(app: AppHandle) -> AppResult<CacheSizes> {
 pub async fn clear_caches(
     app: AppHandle,
     state: State<'_, MediaState>,
+    laugh: State<'_, LaughState>,
     preview: State<'_, PreviewState>,
 ) -> AppResult<ClearResult> {
     let root = cache_root(&app)?;
@@ -1178,6 +1301,7 @@ pub async fn clear_caches(
     let cache = preview.cache.clone();
     let skipped = blocking(move || {
         let mut skipped = remove_contents(&root.join("waveform"), &|_| false);
+        skipped += remove_contents(&root.join("laughter"), &|_| false);
         skipped += remove_contents(&root.join("thumbs"), &|_| false);
         cache.clear();
         // `tmp` holds the files of running transcodes.
@@ -1192,6 +1316,7 @@ pub async fn clear_caches(
     })
     .await?;
     state.clear_loaded();
+    laugh.clear_loaded();
     log::info!("caches cleared, {skipped} entries in use");
     Ok(ClearResult { skipped })
 }

@@ -34,7 +34,35 @@ export const commands = {
 	mergeGapS: number,
 	padS: number,
 	maxResults: number,
+	/**  Laughter probability a moment must exceed (M15). Merge gap, padding and max results are shared. */
+	laughThreshold: number,
 } | null) => typedError<Spike[], AppError>(__TAURI_INVOKE("get_spikes", { id, params })),
+	/**
+	 *  Runs the laughter model over the session (or loads its cached curve). Start it after
+	 *  `analyze_audio`; `job_id` works with `cancel_job` like the other jobs. Fails with kind `model`
+	 *  when the model is missing or broken: the UI then stays with the loud moments.
+	 */
+	analyzeLaughter: (id: string, jobId: string, progress: Channel<Progress>) => typedError<null, AppError>(__TAURI_INVOKE("analyze_laughter", { id, jobId, progress })),
+	/**
+	 *  Laughs, best first, with the laughter threshold and the shared merge gap, padding and maximum
+	 *  of `params` (clamped).
+	 */
+	getLaughs: (id: string, params: {
+	/**  Window of the short-term loudness mean. */
+	shortMs: number,
+	/**  Window of the rolling-median baseline. */
+	baselineS: number,
+	/**  How far above the baseline the short-term loudness must be. */
+	thresholdDb: number,
+	minLenMs: number,
+	mergeGapS: number,
+	padS: number,
+	maxResults: number,
+	/**  Laughter probability a moment must exceed (M15). Merge gap, padding and max results are shared. */
+	laughThreshold: number,
+} | null) => typedError<Spike[], AppError>(__TAURI_INVOKE("get_laughs", { id, params })),
+	/**  The whole laughter curve: one probability per second from video time 0. */
+	getLaughCurve: (id: string) => typedError<(number | null)[], AppError>(__TAURI_INVOKE("get_laugh_curve", { id })),
 	cancelJob: (jobId: string) => typedError<null, AppError>(__TAURI_INVOKE("cancel_job", { jobId })),
 	/**  The ffmpeg that analysis and export use. */
 	getFfmpegInfo: () => typedError<FfmpegPaths, AppError>(__TAURI_INVOKE("get_ffmpeg_info")),
@@ -107,6 +135,8 @@ export const commands = {
 	mergeGapS: number,
 	padS: number,
 	maxResults: number,
+	/**  Laughter probability a moment must exceed (M15). Merge gap, padding and max results are shared. */
+	laughThreshold: number,
 } | null) => typedError<null, AppError>(__TAURI_INVOKE("set_spike_params", { appId, params })),
 	getSpikeDefaults: () => typedError<SpikeParams, AppError>(__TAURI_INVOKE("get_spike_defaults")),
 	/**  `None` returns to the built-in defaults. */
@@ -121,6 +151,8 @@ export const commands = {
 	mergeGapS: number,
 	padS: number,
 	maxResults: number,
+	/**  Laughter probability a moment must exceed (M15). Merge gap, padding and max results are shared. */
+	laughThreshold: number,
 } | null) => typedError<null, AppError>(__TAURI_INVOKE("set_spike_defaults", { params })),
 	/**  Removes every game's preset. */
 	clearSpikePresets: () => typedError<null, AppError>(__TAURI_INVOKE("clear_spike_presets")),
@@ -179,7 +211,7 @@ export type AppError = {
 	message: string,
 };
 
-export type AppErrorKind = "notFound" | "io" | "parse" | "store" | "ffmpeg" | "fireshare" | "cancelled";
+export type AppErrorKind = "notFound" | "io" | "parse" | "store" | "ffmpeg" | "fireshare" | "model" | "cancelled";
 
 /**  How a segment is decoded, scaled and encoded. */
 export type Backend = 
@@ -533,6 +565,8 @@ export type SpikeParams = {
 	mergeGapS: number,
 	padS: number,
 	maxResults: number,
+	/**  Laughter probability a moment must exceed (M15). Merge gap, padding and max results are shared. */
+	laughThreshold: number,
 };
 
 export type SteamAccount = {

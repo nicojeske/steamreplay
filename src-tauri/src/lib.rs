@@ -19,6 +19,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::analyze_audio,
         commands::get_waveform,
         commands::get_spikes,
+        commands::analyze_laughter,
+        commands::get_laughs,
+        commands::get_laugh_curve,
         commands::cancel_job,
         commands::get_ffmpeg_info,
         commands::set_ffmpeg_dir,
@@ -93,6 +96,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_process::init())
         .manage(media::MediaState::default())
+        .manage(media::laughter::LaughState::default())
         .setup(|app| {
             #[cfg(desktop)]
             app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
