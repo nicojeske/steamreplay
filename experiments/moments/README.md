@@ -21,7 +21,7 @@ Each method writes `out/<stem>/<method>.{json,npz}`: the ranked regions and a sc
 
 | Script | Methods |
 |---|---|
-| `taggers.py panns\|effat\|ast` | AudioSet taggers; `<m>` = any reaction class, `<m>_laugh` = laughter only |
+| `taggers.py panns\|effat\|effat40\|ast` | AudioSet taggers; `<m>` = any reaction class, `<m>_laugh` = laughter only |
 | `clap.py` | `clap`: zero-shot against reaction and negative prompts |
 | `arousal.py` | `arousal`: wav2vec2 emotion arousal where Silero VAD finds speech |
 | `vocals.py` | Demucs vocal stem; the `--input vocals` runs add a `_voc` suffix |

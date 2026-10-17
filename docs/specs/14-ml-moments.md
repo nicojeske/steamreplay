@@ -114,12 +114,15 @@ The pool is the union of every method's top 10, so **P@10 is fully labelled for 
 | `panns_laugh` (PANNs CNN14) | 0.95 / 0.55 / 0.95 | **0.82** | **0.78** | 3.5 | 168 | 80 M params, 310 MB |
 | rank average `effat_laugh` + `panns_laugh` | 1.00 / 0.50 / 0.90 | 0.80 | 0.79 | – | – | – |
 | `effat_laugh` (EfficientAT mn10) | 1.00 / 0.50 / 0.80 | 0.77 | 0.77 | 2.1 | **54** | **4.9 M params, 20 MB** |
+| `effat40_laugh` (EfficientAT mn40) | 1.00 / 0.55* / 0.80* | 0.78* | 0.74 | 6.4 | 365 | 68 M params, 274 MB |
 | `clap` (LAION-CLAP zero-shot) | 1.00 / 0.55 / 0.75 | 0.77 | 0.76 | 69 | – | 150 M+ |
 | `fusion` (LR over 16 curves, leave-one-session-out) | 1.00 / 0.50 / 0.70 | 0.73 | 0.77 | – | – | – |
 | `ast` (AST) | – | 0.70 | 0.70 | 18.5 | – | 87 M |
 | `*_voc` (taggers on the Demucs vocals) | – | 0.55–0.72 | 0.56–0.69 | + 53 for Demucs | – | – |
 | `arousal` (wav2vec2 MSP-dim) | – | 0.67 | 0.66 | 44 | – | 300 M |
 | **`loud` (today's detector)** | 0.30 / 0.30 / 0.45 | **0.35** | **0.33** | 0 | 0 | – |
+
+\* One of mn40's top 10 in each Palworld session was not in the round-1 pool. Those 3 regions were added to the pools afterwards and are still unrated, so mn40's P@10 is between 0.78 and 0.85.
 
 The full table and the per-session top 10 are in `experiments/moments/out/report.md` (not committed; regenerate it with `eval.py`).
 
@@ -136,7 +139,7 @@ The full table and the per-session top 10 are in `experiments/moments/out/report
 - It is 15× smaller and 3× faster on CPU: about 1 min per audio hour on 8 threads, which runs in the background after the waveform.
 - It is a plain CNN (convs, BN, Hardswish, SE, linear) plus a mel front-end, so it should run in pure-Rust `tract-onnx`. Then Windows needs no extra DLL.
 - Keep loudness as the fallback, and keep **PANNs CNN14** as plan B if teammates' recordings disagree.
-- Before porting, check `mn40_as` (larger, higher AudioSet mAP) and a 2 s hop on the same labels; both are cheap to test with `taggers.py`.
+- **Checked: `mn40_as` is not worth it.** On our labels it ties `mn10_as` (P@10 0.78 vs 0.77, NDCG@20 0.74 vs 0.77). It is 14× larger and 7× slower on CPU (365 s per audio hour). Even if its 3 unrated regions all turned out good (P@10 0.85), that would not pay for the cost. Its higher AudioSet mAP does not carry over to laughter in game recordings.
 
 ## 8. Open questions / risks
 - Three sessions from one player are a small and biased set. The recommendation needs a check on teammates' recordings in M15.

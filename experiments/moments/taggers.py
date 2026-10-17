@@ -1,6 +1,6 @@
 """AudioSet taggers on sliding windows → reaction score curves.
 
-  uv run python taggers.py panns|effat|ast [--input vocals] [stems…]
+  uv run python taggers.py panns|effat|effat40|ast [--input vocals] [stems…]
 
 Writes methods `<model>` (max over all reaction classes) and `<model>_laugh` (laughter classes only).
 With `--input vocals` the taggers run on the Demucs vocals stem (`out/<stem>/vocals.wav`) and the
@@ -36,7 +36,9 @@ class Panns:
 
 
 class EfficientAT:
-    """fschmid56/EfficientAT `mn10_as` (cloned into vendor/EfficientAT)."""
+    """fschmid56/EfficientAT `mn10_as` (cloned into vendor/EfficientAT). Subclasses pick a larger width."""
+
+    pretrained, width = "mn10_as", 1.0
 
     # Needs ≥ 4 s of context: 2 s windows give ~1.0 for random classes.
     sr, win_s, hop_s, batch = 32000, 5.0, 1.0, 128
@@ -52,7 +54,7 @@ class EfficientAT:
             from models.mn.model import get_model
             from models.preprocess import AugmentMelSTFT
 
-            self.model = get_model(width_mult=1.0, pretrained_name="mn10_as").to(DEVICE).eval()
+            self.model = get_model(width_mult=self.width, pretrained_name=self.pretrained).to(DEVICE).eval()
         finally:
             os.chdir(cwd)
         from panns_inference import labels
@@ -84,7 +86,13 @@ class Ast:
         return torch.sigmoid(self.model(f).logits.float()).cpu().numpy()
 
 
-MODELS = {"panns": Panns, "effat": EfficientAT, "ast": Ast}
+class EfficientAT40(EfficientAT):
+    """`mn40_as`: 4× wider, ~68 M params, higher AudioSet mAP (.484 vs .471)."""
+
+    pretrained, width, batch = "mn40_as", 4.0, 64
+
+
+MODELS = {"panns": Panns, "effat": EfficientAT, "effat40": EfficientAT40, "ast": Ast}
 
 
 def run(name: str, stems: list[str], vocals: bool) -> None:
