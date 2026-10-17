@@ -2,10 +2,10 @@
 
 Finds the good moments in your **Steam Game Recording** background recordings and exports them as MP4 clips.
 
-- Lists Steam's background recordings and saved clips, with game name, date, length and marker count.
-- Shows the audio waveform with Steam's markers and highlights the loud parts (laughing, shouting, cheering). Detection can be tuned per game.
-- Video preview synced with the timeline.
-- Set in and out points and export either **fast** (stream copy, cut on 3 s chunk boundaries) or **precise** (frame-accurate re-encode to H.264, HEVC or AV1, with size presets such as Discord).
+- A library of Steam's background recordings and saved clips, with thumbnails, search and game groups.
+- An editor-style workspace: a large video preview, the audio waveform with Steam's markers across the bottom, and the loud parts (laughing, shouting, cheering) ranked in a side panel. Detection can be tuned per game.
+- Set in and out points and export either **fast** (stream copy, cut on 3 s chunk boundaries) or **precise** (frame-accurate re-encode to H.264, HEVC or AV1, with size presets such as Discord). Exports run in the background while you keep browsing.
+- Keyboard-driven (`?` lists every shortcut), with dark and light themes.
 
 Everything runs locally. SteamReplay only reads Steam's folders and never changes them.
 
@@ -46,7 +46,7 @@ chmod +x SteamReplay_*.AppImage
 | What | Windows | Linux |
 |---|---|---|
 | Exports (default) | Steam's export folder (*Steam → Settings → Game Recording*), else *Videos*. Can be changed in Settings. | same |
-| Caches (waveforms, preview videos) | `%LOCALAPPDATA%\de.steamreplay.app` | `~/.cache/de.steamreplay.app` |
+| Caches (waveforms, thumbnails, preview videos) | `%LOCALAPPDATA%\de.steamreplay.app` | `~/.cache/de.steamreplay.app` |
 | Settings | `%APPDATA%\de.steamreplay.app` | `~/.local/share/de.steamreplay.app` |
 | Logs | `%LOCALAPPDATA%\de.steamreplay.app\logs` | `~/.local/share/de.steamreplay.app/logs` |
 

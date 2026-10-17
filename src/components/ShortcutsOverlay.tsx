@@ -1,42 +1,28 @@
-import { useEffect, useRef } from "react";
-import { SHORTCUTS, type ShortcutGroup } from "../lib/keys";
+import { SHORTCUTS, SHORTCUT_GROUPS } from "../lib/shortcuts";
+import { Modal } from "./ui/Modal";
+import { Kbd } from "./ui/misc";
 
-const GROUPS: ShortcutGroup[] = ["Playback", "Navigation", "Selection", "General"];
-
-/** Every keyboard shortcut, opened with `?`. Esc closes it (native `<dialog>`). */
-export function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
-  const ref = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    ref.current?.showModal();
-  }, []);
-
+/** Every keyboard shortcut, opened with `?`. */
+export function ShortcutsOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <dialog ref={ref} className="settings shortcuts" onClose={onClose}>
-      <h2>Keyboard shortcuts</h2>
-      {GROUPS.map((g) => (
-        <section key={g}>
-          <h3>{g}</h3>
-          <table>
-            <tbody>
+    <Modal open={open} onClose={onClose} title="Keyboard shortcuts" className="shortcuts-modal">
+      <div className="shortcuts-grid">
+        {SHORTCUT_GROUPS.map((g) => (
+          <section key={g}>
+            <h3>{g}</h3>
+            <dl>
               {SHORTCUTS.filter((s) => s.group === g).map((s) => (
-                <tr key={s.keys}>
-                  <td>
-                    <kbd>{s.keys}</kbd>
-                  </td>
-                  <td>{s.action}</td>
-                </tr>
+                <div key={s.id} className="shortcut-row">
+                  <dt>{s.action}</dt>
+                  <dd>
+                    <Kbd>{s.keys}</Kbd>
+                  </dd>
+                </div>
               ))}
-            </tbody>
-          </table>
-        </section>
-      ))}
-      <div className="buttons">
-        <span className="spacer" />
-        <button type="button" onClick={() => ref.current?.close()}>
-          Close
-        </button>
+            </dl>
+          </section>
+        ))}
       </div>
-    </dialog>
+    </Modal>
   );
 }

@@ -1,5 +1,6 @@
-//! The `replay://` URI scheme. `replay://localhost/preview/<urlencoded id>/<s>.mp4` returns
-//! segment `s` of an open preview session (Windows: `http://replay.localhost/…`).
+//! The `replay://` URI scheme (Windows: `http://replay.localhost/…`):
+//! - `replay://localhost/preview/<urlencoded id>/<s>.mp4`: segment `s` of an open preview session,
+//! - `replay://localhost/thumb/<urlencoded id>.jpg`: the library thumbnail of a session (M9).
 
 use std::borrow::Cow;
 
@@ -52,7 +53,28 @@ fn error(status: StatusCode, message: String) -> Response<Cow<'static, [u8]>> {
         .expect("valid response")
 }
 
+async fn thumbnail(app: &AppHandle, id: String) -> Response<Cow<'static, [u8]>> {
+    let path = match crate::commands::thumbnail(app, id.clone()).await {
+        Ok(p) => p,
+        Err(AppError::NotFound(m)) => return error(StatusCode::NOT_FOUND, m),
+        Err(e) => {
+            log::info!("thumbnail of {id}: {e}");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+        }
+    };
+    match tokio::fs::read(&path).await {
+        Ok(data) => response(StatusCode::OK, "image/jpeg")
+            .header(header::CACHE_CONTROL, "max-age=86400")
+            .body(Cow::Owned(data))
+            .expect("valid response"),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, format!("{}: {e}", path.display())),
+    }
+}
+
 pub async fn handle(app: &AppHandle, request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+    if let Some(id) = crate::media::thumbs::parse_path(request.uri().path()) {
+        return thumbnail(app, id).await;
+    }
     let Some((id, s)) = parse_path(request.uri().path()) else {
         return error(StatusCode::NOT_FOUND, format!("unknown path {}", request.uri().path()));
     };

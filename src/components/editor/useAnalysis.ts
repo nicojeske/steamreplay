@@ -1,20 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Channel } from "@tauri-apps/api/core";
-import { commands, type Progress, type SessionDetail, type Spike, type SpikeParams, type WaveformMeta } from "../bindings";
-import { IpcError, unwrap } from "../lib/ipc";
-import { paramsEqual } from "../lib/spikeTuning";
-import { WaveformTiles } from "../lib/waveform";
-import { useView } from "../state/view";
-import { ExportPanel } from "./ExportPanel";
-import { LoudnessLane } from "./LoudnessLane";
-import { Player } from "./Player";
-import { SpikeTuning } from "./SpikeTuning";
-import { Timeline } from "./Timeline";
-import { SpikeList } from "./SpikeList";
+import { commands, type Progress, type SessionDetail, type Spike, type SpikeParams, type WaveformMeta } from "../../bindings";
+import { IpcError, errorMessage, unwrap } from "../../lib/ipc";
+import { paramsEqual } from "../../lib/spikeTuning";
+import { WaveformTiles } from "../../lib/waveform";
+import { toast } from "../../state/toasts";
+import { useView } from "../../state/view";
 
-type Props = { detail: SessionDetail; onError: (e: unknown) => void };
-
-type Status =
+export type AnalysisStatus =
   | { kind: "running"; fraction: number | null }
   | { kind: "ready"; meta: WaveformMeta }
   | { kind: "cancelled" }
@@ -25,34 +18,19 @@ const SPIKES_THROTTLE_MS = 150;
 /** The game's preset is saved this long after the last change. */
 const SAVE_DELAY_MS = 1000;
 
-function readFlag(key: string): boolean {
-  try {
-    return localStorage.getItem(key) === "1";
-  } catch {
-    return false;
-  }
-}
+export type Analysis = ReturnType<typeof useAnalysis>;
 
-function writeFlag(key: string, on: boolean) {
-  try {
-    localStorage.setItem(key, on ? "1" : "0");
-  } catch {
-    // Not important: the panel just starts collapsed next time.
-  }
-}
-
-/** Runs the audio analysis for a session and shows the timeline and spike list. */
-export function WaveformPanel({ detail, onError }: Props) {
+/** Runs the audio analysis of a session and keeps its loud moments in sync with the tuning. */
+export function useAnalysis(detail: SessionDetail) {
   const id = detail.summary.id;
   const appId = detail.summary.appId;
   const { first, last } = detail.chunks;
-  const [status, setStatus] = useState<Status>({ kind: "running", fraction: null });
+  const hasMedia = detail.summary.durationS > 0;
+  const [status, setStatus] = useState<AnalysisStatus>({ kind: "running", fraction: null });
   const [attempt, setAttempt] = useState(0);
   const [params, setParams] = useState<SpikeParams | null>(null);
   const [spikes, setSpikes] = useState<Spike[]>([]);
   const [busy, setBusy] = useState(false);
-  const [tuneOpen, setTuneOpen] = useState(() => readFlag("spikeTuningOpen"));
-  const [lane, setLane] = useState(() => readFlag("loudnessLane"));
   const cacheSeq = useView((s) => s.cacheSeq);
   const jobRef = useRef<string | null>(null);
   const paramsRef = useRef(params);
@@ -61,6 +39,7 @@ export function WaveformPanel({ detail, onError }: Props) {
   });
 
   useEffect(() => {
+    if (!hasMedia) return;
     const jobId = crypto.randomUUID();
     jobRef.current = jobId;
     let active = true;
@@ -71,7 +50,7 @@ export function WaveformPanel({ detail, onError }: Props) {
         const p = await unwrap(commands.getSpikeParams(appId));
         const found = await unwrap(commands.getSpikes(id, p));
         if (!active) return;
-        useView.getState().reset(meta.durationS);
+        useView.getState().setDuration(meta.durationS);
         setParams(p);
         setSpikes(found);
         setStatus({ kind: "ready", meta });
@@ -81,15 +60,15 @@ export function WaveformPanel({ detail, onError }: Props) {
         if (e instanceof IpcError && e.kind === "cancelled") {
           setStatus({ kind: "cancelled" });
         } else {
-          setStatus({ kind: "failed", message: e instanceof Error ? e.message : String(e) });
-          onError(e);
+          setStatus({ kind: "failed", message: errorMessage(e) });
+          toast.error(e);
         }
       });
     return () => {
       active = false;
       void commands.cancelJob(jobId);
     };
-  }, [id, appId, first, last, attempt, cacheSeq, onError]);
+  }, [id, appId, first, last, attempt, cacheSeq, hasMedia]);
 
   // --- live re-detection ---------------------------------------------------------------------
 
@@ -125,7 +104,7 @@ export function WaveformPanel({ detail, onError }: Props) {
           })
           .catch((e: unknown) => {
             if (n === reqSeq.current) setBusy(false);
-            onError(e);
+            toast.error(e);
           });
       };
       window.clearTimeout(fetchTimer.current);
@@ -133,7 +112,7 @@ export function WaveformPanel({ detail, onError }: Props) {
       if (wait <= 0) run();
       else fetchTimer.current = window.setTimeout(run, wait);
     },
-    [id, onError],
+    [id],
   );
 
   // Saving: debounced, and flushed when the session closes.
@@ -143,8 +122,8 @@ export function WaveformPanel({ detail, onError }: Props) {
     window.clearTimeout(saveTimer.current);
     const p = pendingSave.current;
     pendingSave.current = null;
-    if (p) await unwrap(commands.setSpikeParams(appId, p)).catch(onError);
-  }, [appId, onError]);
+    if (p) await unwrap(commands.setSpikeParams(appId, p)).catch(toast.error);
+  }, [appId]);
 
   useEffect(
     () => () => {
@@ -172,17 +151,17 @@ export function WaveformPanel({ detail, onError }: Props) {
       setParams(p);
       fetchSpikes(p);
     } catch (e) {
-      onError(e);
+      toast.error(e);
     }
-  }, [appId, fetchSpikes, flushSave, onError]);
+  }, [appId, fetchSpikes, flushSave]);
 
-  const reset = async () => {
+  const resetParams = async () => {
     pendingSave.current = null;
     window.clearTimeout(saveTimer.current);
     try {
       await unwrap(commands.setSpikeParams(appId, null));
     } catch (e) {
-      onError(e);
+      toast.error(e);
     }
     await reloadParams();
   };
@@ -198,76 +177,19 @@ export function WaveformPanel({ detail, onError }: Props) {
 
   const tiles = useMemo(() => (status.kind === "ready" ? new WaveformTiles(id, status.meta) : null), [id, status]);
 
-  if (status.kind === "running") {
-    return (
-      <div className="analysis-progress">
-        <span>Analysing audio…</span>
-        <progress max={1} value={status.fraction ?? undefined} />
-        <button type="button" onClick={() => jobRef.current && void commands.cancelJob(jobRef.current)}>
-          Cancel
-        </button>
-      </div>
-    );
-  }
-  if (status.kind !== "ready" || !tiles || !params) {
-    return (
-      <div className="analysis-progress">
-        <span className={status.kind === "failed" ? "warn" : "muted"}>
-          {status.kind === "failed" ? `Analysis failed: ${status.message}` : "Analysis cancelled."}
-        </span>
-        <button
-          type="button"
-          onClick={() => {
-            setStatus({ kind: "running", fraction: null });
-            setAttempt((a) => a + 1);
-          }}
-        >
-          Analyse again
-        </button>
-      </div>
-    );
-  }
-  return (
-    <div className="waveform-panel">
-      <Player id={id} />
-      <Timeline
-        tiles={tiles}
-        spikes={spikes}
-        markers={detail.markers}
-        gaps={status.meta.gaps}
-        segS={detail.mpd?.segmentDurationS ?? 3}
-      />
-      {lane && <LoudnessLane tiles={tiles} thresholdDb={params.thresholdDb} spikes={spikes} />}
-      <ExportPanel id={id} video={detail.mpd?.video ?? null} onError={onError} />
-      <h2 className="spike-header">
-        Loud moments <span className="count">{spikes.length}</span>
-        <button
-          type="button"
-          className="link"
-          aria-expanded={tuneOpen}
-          onClick={() => {
-            setTuneOpen(!tuneOpen);
-            writeFlag("spikeTuningOpen", !tuneOpen);
-          }}
-        >
-          {tuneOpen ? "Hide tuning" : "Tune"}
-        </button>
-      </h2>
-      {tuneOpen && (
-        <SpikeTuning
-          params={params}
-          onChange={changeParams}
-          onReset={() => void reset()}
-          count={spikes.length}
-          busy={busy}
-          lane={lane}
-          onLane={(on) => {
-            setLane(on);
-            writeFlag("loudnessLane", on);
-          }}
-        />
-      )}
-      <SpikeList spikes={spikes} />
-    </div>
-  );
+  return {
+    status,
+    tiles,
+    params,
+    spikes,
+    /** A spike request with the current params is still running. */
+    busy,
+    changeParams,
+    resetParams: () => void resetParams(),
+    retry: () => {
+      setStatus({ kind: "running", fraction: null });
+      setAttempt((a) => a + 1);
+    },
+    cancel: () => jobRef.current && void commands.cancelJob(jobRef.current),
+  };
 }

@@ -33,6 +33,8 @@ type ViewState = {
   cacheSeq: number;
   /** Shows the whole session and puts the playhead at 0. */
   reset: (durationS: number) => void;
+  /** Corrects the duration (the analysis knows it exactly) and keeps the playhead, view and selection. */
+  setDuration: (durationS: number) => void;
   /** Moves the playhead without moving the video (used by the video itself). */
   setPlayhead: (t: number) => void;
   /** The user wants to go to `t`: moves the playhead and the video. */
@@ -95,6 +97,13 @@ export const useView = create<ViewState>((set) => ({
       outS: null,
       loop: false,
     }),
+  setDuration: (durationS) =>
+    set((st) => {
+      const whole = st.viewStartS <= 0 && st.viewEndS >= st.durationS - 1e-6;
+      const [viewStartS, viewEndS] = whole ? [0, durationS] : clampView(st.viewStartS, st.viewEndS, durationS);
+      const sel = st.inS !== null && st.outS !== null ? selection(st.inS, st.outS, durationS) : {};
+      return { durationS, viewStartS, viewEndS, playheadS: clampTime(st.playheadS, durationS), ...sel };
+    }),
   setPlayhead: (t) => set((st) => ({ playheadS: clampTime(t, st.durationS) })),
   seek: (t) =>
     set((st) => {
@@ -140,4 +149,38 @@ export function followPlayhead() {
     const start = playheadS - span * 0.1;
     setView(start, start + span);
   }
+}
+
+/** Zooms by `factor` (< 1 zooms in) around the playhead, or the centre when the playhead is not visible. */
+export function zoomBy(factor: number) {
+  const { viewStartS, viewEndS, playheadS, setView } = useView.getState();
+  const span = viewEndS - viewStartS;
+  const anchor = playheadS >= viewStartS && playheadS <= viewEndS ? playheadS : viewStartS + span / 2;
+  const rel = (anchor - viewStartS) / span;
+  const newSpan = span * factor;
+  const start = anchor - rel * newSpan;
+  setView(start, start + newSpan);
+}
+
+/** Shows the whole session. */
+export function zoomFit() {
+  const { durationS, setView } = useView.getState();
+  setView(0, durationS);
+}
+
+/** Pans so `t` is visible (centred), keeping the zoom. */
+export function reveal(t: number) {
+  const { viewStartS, viewEndS, setView } = useView.getState();
+  if (t >= viewStartS && t <= viewEndS) return;
+  const half = (viewEndS - viewStartS) / 2;
+  setView(t - half, t + half);
+}
+
+/** Plays the selection from its in point, looping. */
+export function playSelection() {
+  const view = useView.getState();
+  if (view.inS === null) return;
+  view.setLoop(true);
+  view.seek(view.inS);
+  view.requestPlay();
 }

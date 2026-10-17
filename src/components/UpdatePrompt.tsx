@@ -1,6 +1,9 @@
 import { useState } from "react";
+import { Sparkles } from "lucide-react";
 import { errorMessage } from "../lib/ipc";
 import { installUpdate, waitForExports, type Update } from "../lib/updater";
+import { Button } from "./ui/Button";
+import { ProgressBar } from "./ui/misc";
 
 type Phase = { kind: "ask" } | { kind: "waiting" } | { kind: "installing"; fraction: number | null } | { kind: "failed"; message: string };
 
@@ -20,28 +23,26 @@ export function UpdatePrompt({ update, onLater }: { update: Update; onLater: () 
   };
 
   return (
-    <div className="toast update" role="status">
-      <div>SteamReplay {update.version} is available.</div>
-      {phase.kind === "waiting" && <div className="muted">Waiting for exports to finish…</div>}
-      {phase.kind === "installing" && (
-        <div className="toast-progress" aria-label="Downloading update">
-          <div
-            className={phase.fraction === null ? "indeterminate" : undefined}
-            style={phase.fraction === null ? undefined : { width: `${phase.fraction * 100}%` }}
-          />
+    <div className="toast toast-update" role="status">
+      <Sparkles size={18} className="toast-icon" aria-hidden />
+      <div className="toast-body">
+        <div className="toast-text">
+          <strong>SteamReplay {update.version}</strong> is available.
         </div>
-      )}
-      {phase.kind === "failed" && <div className="warn">Update failed: {phase.message}</div>}
-      {(phase.kind === "ask" || phase.kind === "failed") && (
-        <div className="buttons">
-          <button type="button" className="primary" onClick={() => void install()}>
-            {phase.kind === "failed" ? "Try again" : "Install and restart"}
-          </button>
-          <button type="button" onClick={onLater}>
-            Later
-          </button>
-        </div>
-      )}
+        {phase.kind === "waiting" && <div className="muted">Waiting for exports to finish…</div>}
+        {phase.kind === "installing" && <ProgressBar value={phase.fraction} label="Downloading update" />}
+        {phase.kind === "failed" && <div className="danger">Update failed: {phase.message}</div>}
+        {(phase.kind === "ask" || phase.kind === "failed") && (
+          <div className="toast-actions">
+            <Button variant="primary" size="sm" onClick={() => void install()}>
+              {phase.kind === "failed" ? "Try again" : "Install and restart"}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onLater}>
+              Later
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

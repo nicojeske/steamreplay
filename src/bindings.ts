@@ -123,7 +123,7 @@ export const commands = {
 	removeRecentExport: (path: string) => typedError<null, AppError>(__TAURI_INVOKE("remove_recent_export", { path })),
 	getCacheSizes: () => typedError<CacheSizes, AppError>(__TAURI_INVOKE("get_cache_sizes")),
 	/**
-	 *  Deletes the waveform, preview and export caches and forgets the loaded analyses. Files of
+	 *  Deletes the waveform, thumbnail, preview and export caches and forgets the loaded analyses. Files of
 	 *  running preview transcodes and exports are left alone.
 	 */
 	clearCaches: () => typedError<ClearResult, AppError>(__TAURI_INVOKE("clear_caches")),
@@ -161,6 +161,7 @@ export type CacheSizes = {
 	waveform: number,
 	preview: number,
 	export: number,
+	thumbs: number,
 };
 
 /**  Based on the video stream files that exist on disk. */

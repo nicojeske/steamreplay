@@ -1,16 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Tooltip } from "radix-ui";
+import { Check, FolderSearch, MousePointerClick, X } from "lucide-react";
 import { commands, type DiscoveryInfo, type SessionDetail, type SessionSummary } from "./bindings";
-import { errorMessage, unwrap } from "./lib/ipc";
-import { SessionList } from "./components/SessionList";
-import { SessionDetails } from "./components/SessionDetails";
-import { SettingsDialog } from "./components/SettingsDialog";
-import { ShortcutsOverlay } from "./components/ShortcutsOverlay";
-import { dialogOpen, isTyping } from "./lib/keys";
-import { useView } from "./state/view";
-import { Toasts, type Toast } from "./components/Toasts";
-import { UpdatePrompt } from "./components/UpdatePrompt";
+import { unwrap } from "./lib/ipc";
+import { SHORTCUTS, useShortcut } from "./lib/shortcuts";
 import { checkForUpdate, type Update } from "./lib/updater";
-import "./App.css";
+import { toast } from "./state/toasts";
+import { LIMITS, useUi } from "./state/ui";
+import { useView } from "./state/view";
+import { Editor } from "./components/editor/Editor";
+import { Library } from "./components/library/Library";
+import { SettingsDialog } from "./components/settings/SettingsDialog";
+import { ShortcutsOverlay } from "./components/ShortcutsOverlay";
+import { Toasts } from "./components/Toasts";
+import { TopBar } from "./components/TopBar";
+import { UpdatePrompt } from "./components/UpdatePrompt";
+import { Button } from "./components/ui/Button";
+import { EmptyState, Kbd, Spinner } from "./components/ui/misc";
+import { Splitter } from "./components/ui/Splitter";
+
+/** Shown on the empty stage. */
+const HINTS = ["playPause", "nextSpike", "setIn", "export", "shortcuts"] as const;
 
 export default function App() {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
@@ -20,15 +30,11 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const nextToast = useRef(0);
   const [update, setUpdate] = useState<Update | null>(null);
-
-  const showError = useCallback((e: unknown) => {
-    const id = nextToast.current++;
-    setToasts((t) => [...t, { id, text: errorMessage(e) }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 8000);
-  }, []);
+  const libraryCollapsed = useUi((s) => s.libraryCollapsed);
+  const libraryWidth = useUi((s) => s.libraryWidth);
+  const inspectorWidth = useUi((s) => s.inspectorWidth);
+  const timelineHeight = useUi((s) => s.timelineHeight);
 
   const load = useCallback(
     () =>
@@ -36,9 +42,15 @@ export default function App() {
         .then(([list, discovery]) => {
           setSessions(list);
           setInfo(discovery);
+          // Reopen the recording of the last run.
+          setSelectedId((cur) => {
+            if (cur) return cur;
+            const last = useUi.getState().lastSessionId;
+            return last && list.some((s) => s.id === last) ? last : null;
+          });
         })
-        .catch(showError),
-    [showError],
+        .catch(toast.error),
+    [],
   );
 
   const refresh = useCallback(() => {
@@ -61,103 +73,148 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, []);
 
-  // `?` shows the shortcuts. Matched by `e.key`, so Shift+ß on a German layout works too.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "?" || e.ctrlKey || e.altKey || e.metaKey || isTyping(e.target) || dialogOpen()) return;
-      e.preventDefault();
-      setShortcutsOpen(true);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  const select = (id: string) => {
+    setSelectedId(id);
+    useUi.getState().set({ lastSessionId: id });
+  };
 
+  // The view is reset before the editor of a new session mounts, so the player can seek at once.
+  const shownId = useRef<string | null>(null);
   useEffect(() => {
     if (!selectedId) return;
     let cancelled = false;
     unwrap(commands.getSession(selectedId))
-      .then((d) => !cancelled && setDetail(d))
-      .catch((e: unknown) => !cancelled && showError(e));
+      .then((d) => {
+        if (cancelled) return;
+        if (shownId.current !== d.summary.id) {
+          shownId.current = d.summary.id;
+          useView.getState().reset(d.summary.durationS);
+        }
+        setDetail(d);
+      })
+      .catch((e: unknown) => !cancelled && toast.error(e));
     return () => {
       cancelled = true;
     };
-  }, [selectedId, sessions, showError]);
+  }, [selectedId, sessions]);
+
+  const closeSettings = () => {
+    setSettingsOpen(false);
+    useView.getState().bumpSettings();
+  };
+
+  useShortcut("shortcuts", () => setShortcutsOpen(true));
+  useShortcut("settings", () => setSettingsOpen(true));
+  useShortcut("library", () => useUi.getState().set({ libraryCollapsed: !useUi.getState().libraryCollapsed }));
 
   const visibleDetail = detail && detail.summary.id === selectedId ? detail : null;
+  const noRecordings = sessions !== null && sessions.length === 0;
+  const style = {
+    "--library-w": `${libraryWidth}px`,
+    "--inspector-w": `${inspectorWidth}px`,
+    "--timeline-h": `${timelineHeight}px`,
+  } as React.CSSProperties;
 
   return (
-    <div className="app">
-      <header className="toolbar">
-        <span className="title">SteamReplay</span>
-        <span className="muted">{sessions ? `${sessions.length} recordings` : ""}</span>
-        <span className="spacer" />
-        <button type="button" onClick={refresh} disabled={loading || sessions === null}>
-          {loading || sessions === null ? "Loading…" : "Refresh"}
-        </button>
-        <button type="button" onClick={() => setSettingsOpen(true)}>
-          Settings
-        </button>
-      </header>
+    <Tooltip.Provider delayDuration={450} skipDelayDuration={200}>
+      <div className="app" style={style}>
+        <TopBar
+          session={visibleDetail?.summary ?? null}
+          loading={loading || sessions === null}
+          onRefresh={refresh}
+          onSettings={() => setSettingsOpen(true)}
+          onShortcuts={() => setShortcutsOpen(true)}
+        />
 
-      {sessions && sessions.length === 0 ? (
-        <main className="empty-state">
-          <h1>No recordings found</h1>
-          <p>Checked these Steam folders:</p>
-          <ul className="checks">
-            {info?.checkedRoots.map((c) => (
-              <li key={c.path} className={c.exists ? "ok" : "muted"}>
-                {c.exists ? "✓" : "✗"} <span className="mono">{c.path}</span>
-              </li>
-            ))}
-            {info?.recordingsRootOverride && (
-              <li>
-                Override: <span className="mono">{info.recordingsRootOverride}</span>
-              </li>
-            )}
-          </ul>
-          <p className="muted">
-            If Steam records to a different folder, choose it in Settings.
-          </p>
-          <button type="button" onClick={() => setSettingsOpen(true)}>
-            Choose recordings folder…
-          </button>
-        </main>
-      ) : (
-        <main className="panes">
-          <aside className="left">
-            {sessions && <SessionList sessions={sessions} selectedId={selectedId} onSelect={setSelectedId} />}
-          </aside>
-          <section className="right">
-            {visibleDetail ? (
-              <SessionDetails detail={visibleDetail} onError={showError} />
+        <div className={`workspace ${libraryCollapsed || noRecordings ? "no-library" : ""}`}>
+          {!libraryCollapsed && !noRecordings && (
+            <>
+              <Library sessions={sessions} selectedId={selectedId} onSelect={select} />
+              <Splitter
+                axis="x"
+                label="Resize the library"
+                value={libraryWidth}
+                min={LIMITS.libraryWidth[0]}
+                max={LIMITS.libraryWidth[1]}
+                onChange={(v) => useUi.getState().set({ libraryWidth: v })}
+              />
+            </>
+          )}
+          <main className="main">
+            {noRecordings ? (
+              <Onboarding info={info} onChoose={() => setSettingsOpen(true)} />
+            ) : visibleDetail ? (
+              <Editor key={visibleDetail.summary.id} detail={visibleDetail} />
+            ) : selectedId ? (
+              <div className="center-fill">
+                <Spinner size={22} />
+              </div>
             ) : (
-              <p className="muted placeholder">{selectedId ? "Loading…" : "Select a recording."}</p>
+              <EmptyState icon={<MousePointerClick size={30} />} title="Pick a recording" className="stage-empty">
+                <p className="muted">Choose a recording or clip in the library to watch it, find the loud moments and cut a clip.</p>
+                <dl className="hint-keys">
+                  {HINTS.map((id) => {
+                    const s = SHORTCUTS.find((x) => x.id === id);
+                    return (
+                      s && (
+                        <div key={id}>
+                          <dt>
+                            <Kbd>{s.keys}</Kbd>
+                          </dt>
+                          <dd>{s.action}</dd>
+                        </div>
+                      )
+                    );
+                  })}
+                </dl>
+              </EmptyState>
             )}
-          </section>
-        </main>
-      )}
+          </main>
+        </div>
 
-      {settingsOpen && (
         <SettingsDialog
+          open={settingsOpen}
           info={info}
-          onClose={() => {
-            setSettingsOpen(false);
-            useView.getState().bumpSettings();
-          }}
+          onClose={closeSettings}
           onChanged={refresh}
           onShowShortcuts={() => {
-            setSettingsOpen(false);
-            useView.getState().bumpSettings();
+            closeSettings();
             setShortcutsOpen(true);
           }}
-          onError={showError}
           onUpdate={setUpdate}
         />
-      )}
-      {shortcutsOpen && <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />}
-      <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))}>
-        {update && <UpdatePrompt update={update} onLater={() => setUpdate(null)} />}
-      </Toasts>
-    </div>
+        <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+        <Toasts>{update && <UpdatePrompt update={update} onLater={() => setUpdate(null)} />}</Toasts>
+      </div>
+    </Tooltip.Provider>
+  );
+}
+
+/** No recordings found: where the app looked, and how to point it elsewhere. */
+function Onboarding({ info, onChoose }: { info: DiscoveryInfo | null; onChoose: () => void }) {
+  return (
+    <EmptyState icon={<FolderSearch size={30} />} title="No recordings found" className="onboarding">
+      <p className="muted">
+        SteamReplay lists Steam's background recordings and saved clips. Turn on background recording in Steam (Settings → Game Recording), play
+        a bit, then refresh.
+      </p>
+      <h4 className="subheading">Checked these Steam folders</h4>
+      <ul className="checks">
+        {info?.checkedRoots.map((c) => (
+          <li key={c.path} className={c.exists ? "" : "faint"}>
+            {c.exists ? <Check size={14} className="ok" /> : <X size={14} />}
+            <span className="mono break">{c.path}</span>
+          </li>
+        ))}
+        {info?.recordingsRootOverride && (
+          <li>
+            <span>Override:</span> <span className="mono break">{info.recordingsRootOverride}</span>
+          </li>
+        )}
+      </ul>
+      <Button variant="primary" onClick={onChoose}>
+        Choose recordings folder…
+      </Button>
+    </EmptyState>
   );
 }

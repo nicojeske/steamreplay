@@ -39,3 +39,17 @@ export function formatTimecode(totalSeconds: number, decimals = 0): string {
   if (decimals === 0) return formatDuration(whole);
   return formatDuration(whole) + (t - whole).toFixed(decimals).slice(1);
 }
+
+/** "Today 21:01", "Yesterday 18:30", else a short locale date and time. Input like `formatDateTime`. */
+export function formatRelativeDate(iso: string, now = new Date()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round((day(now) - day(d)) / 86_400_000);
+  if (diffDays === 0) return `Today ${time}`;
+  if (diffDays === 1) return `Yesterday ${time}`;
+  const sameYear = d.getFullYear() === now.getFullYear();
+  const date = d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: sameYear ? undefined : "numeric" });
+  return `${date}, ${time}`;
+}

@@ -20,7 +20,7 @@ use crate::media::encoders::{self, Capabilities, VideoCodec};
 use crate::media::export::{
     self, ExportMode, ExportModeKind, ExportPrefs, ExportRequest, ExportResult, RecentEntry, RecentExport, Snap,
 };
-use crate::media::{self, Analysis, MediaState, Progress, WaveformMeta, chunks};
+use crate::media::{self, Analysis, MediaState, Progress, WaveformMeta, chunks, thumbs};
 use crate::steam::locate::{self, RootCheck, SteamAccount};
 use crate::steam::recordings::{self, SessionDetail, SessionSummary};
 use crate::steam::diagnostics;
@@ -822,6 +822,23 @@ pub async fn remove_recent_export(app: AppHandle, path: PathBuf) -> AppResult<()
 
 // --- caches (M6) ----------------------------------------------------------------------------------
 
+// --- thumbnails (M9) ------------------------------------------------------------------------------
+
+/// The thumbnail of a session for the `replay://` protocol, created on the first request.
+pub async fn thumbnail(app: &AppHandle, id: String) -> AppResult<PathBuf> {
+    let dir = cache_root(app)?.join("thumbs");
+    if let Some(p) = thumbs::cached(&dir, &id) {
+        return Ok(p);
+    }
+    let detail = {
+        let app = app.clone();
+        blocking(move || session(&app, &id)).await?
+    };
+    let state = app.state::<MediaState>();
+    let paths = ffmpeg_paths(app, &state).await?;
+    thumbs::create(&paths, &dir, &detail).await
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CacheSizes {
@@ -831,6 +848,8 @@ pub struct CacheSizes {
     pub preview: u64,
     #[specta(type = specta_typescript::Number)]
     pub export: u64,
+    #[specta(type = specta_typescript::Number)]
+    pub thumbs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -887,12 +906,13 @@ pub async fn get_cache_sizes(app: AppHandle) -> AppResult<CacheSizes> {
             waveform: dir_size(&root.join("waveform")),
             preview: dir_size(&root.join("preview")),
             export: dir_size(&root.join("export")),
+            thumbs: dir_size(&root.join("thumbs")),
         })
     })
     .await
 }
 
-/// Deletes the waveform, preview and export caches and forgets the loaded analyses. Files of
+/// Deletes the waveform, thumbnail, preview and export caches and forgets the loaded analyses. Files of
 /// running preview transcodes and exports are left alone.
 #[tauri::command]
 #[specta::specta]
@@ -906,6 +926,7 @@ pub async fn clear_caches(
     let cache = preview.cache.clone();
     let skipped = blocking(move || {
         let mut skipped = remove_contents(&root.join("waveform"), &|_| false);
+        skipped += remove_contents(&root.join("thumbs"), &|_| false);
         cache.clear();
         // `tmp` holds the files of running transcodes.
         skipped += remove_contents(&cache.root, &|n| n == "tmp");

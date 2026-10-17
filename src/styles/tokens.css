@@ -1,0 +1,123 @@
+/* Design tokens. Dark is the default; light follows the system unless the user chose a theme
+ * (`data-theme` on <html>, set from the `ui` store). The canvases read several of these with
+ * `getComputedStyle` (`--wave`, `--wave-rms`, `--spike`, `--playhead`, `--selection`, `--accent`,
+ * `--clip`, `--warn`, `--muted`, `--border`, `--panel`, `--text`), so keep those names. */
+
+:root {
+  color-scheme: dark;
+  --bg: #0d0f13;
+  --surface-1: #14171c;
+  --surface-2: #1a1e25;
+  --surface-3: #232831;
+  --surface-hover: #262c36;
+  --panel: var(--surface-1);
+  --border: #262b34;
+  --border-strong: #353c48;
+  --text: #e7e9ee;
+  --muted: #8d95a4;
+  --faint: #5f6775;
+  --accent: #4b9cf5;
+  --accent-hover: #69aef8;
+  --accent-text: #ffffff;
+  --accent-soft: rgb(75 156 245 / 0.16);
+  --focus: #69aef8;
+  --clip: #a78bfa;
+  --warn: #f5a524;
+  --warn-soft: rgb(245 165 36 / 0.12);
+  --danger: #f2555a;
+  --danger-soft: rgb(242 85 90 / 0.14);
+  --success: #3ccf91;
+  --wave: #47505f;
+  --wave-rms: #a3aec0;
+  --spike: #ff5c7a;
+  --playhead: #ff4d4d;
+  --selection: #2dd4bf;
+  --video-bg: #000000;
+  --overlay: rgb(0 0 0 / 0.55);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.35);
+  --shadow-2: 0 8px 28px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.4);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 28px;
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --font-sans: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  --text-xs: 11.5px;
+  --text-sm: 12.5px;
+  --text-md: 13.5px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --topbar-h: 44px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #e9ecf1;
+    --surface-1: #ffffff;
+    --surface-2: #f5f6f8;
+    --surface-3: #eceef2;
+    --surface-hover: #e7eaef;
+    --border: #dde1e7;
+    --border-strong: #c6ccd6;
+    --text: #161a20;
+    --muted: #5d6676;
+    --faint: #8a93a1;
+    --accent: #1f6fe0;
+    --accent-hover: #175cc0;
+    --accent-soft: rgb(31 111 224 / 0.11);
+    --focus: #1f6fe0;
+    --clip: #7c3aed;
+    --warn: #b45309;
+    --warn-soft: rgb(180 83 9 / 0.1);
+    --danger: #dc2626;
+    --danger-soft: rgb(220 38 38 / 0.09);
+    --success: #15803d;
+    --wave: #a7b0bf;
+    --wave-rms: #4b5567;
+    --spike: #e11d48;
+    --playhead: #dc2626;
+    --selection: #0d9488;
+    --overlay: rgb(0 0 0 / 0.5);
+    --shadow-1: 0 1px 2px rgb(16 24 40 / 0.08);
+    --shadow-2: 0 10px 30px rgb(16 24 40 / 0.16), 0 1px 3px rgb(16 24 40 / 0.1);
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #e9ecf1;
+  --surface-1: #ffffff;
+  --surface-2: #f5f6f8;
+  --surface-3: #eceef2;
+  --surface-hover: #e7eaef;
+  --border: #dde1e7;
+  --border-strong: #c6ccd6;
+  --text: #161a20;
+  --muted: #5d6676;
+  --faint: #8a93a1;
+  --accent: #1f6fe0;
+  --accent-hover: #175cc0;
+  --accent-soft: rgb(31 111 224 / 0.11);
+  --focus: #1f6fe0;
+  --clip: #7c3aed;
+  --warn: #b45309;
+  --warn-soft: rgb(180 83 9 / 0.1);
+  --danger: #dc2626;
+  --danger-soft: rgb(220 38 38 / 0.09);
+  --success: #15803d;
+  --wave: #a7b0bf;
+  --wave-rms: #4b5567;
+  --spike: #e11d48;
+  --playhead: #dc2626;
+  --selection: #0d9488;
+  --overlay: rgb(0 0 0 / 0.5);
+  --shadow-1: 0 1px 2px rgb(16 24 40 / 0.08);
+  --shadow-2: 0 10px 30px rgb(16 24 40 / 0.16), 0 1px 3px rgb(16 24 40 / 0.1);
+}

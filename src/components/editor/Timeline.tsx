@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { Gap, Marker, Spike } from "../bindings";
-import { formatTimecode } from "../lib/format";
-import { snapSelection } from "../lib/selection";
-import type { WaveformTiles } from "../lib/waveform";
-import { useView, zoomToRange } from "../state/view";
+import type { Gap, Marker, Spike } from "../../bindings";
+import { formatTimecode } from "../../lib/format";
+import { snapSelection } from "../../lib/selection";
+import type { WaveformTiles } from "../../lib/waveform";
+import { onThemeChange } from "../../state/ui";
+import { useView, zoomToRange } from "../../state/view";
 
 type Props = {
   tiles: WaveformTiles;
@@ -17,9 +18,9 @@ type Props = {
 const OVERVIEW_H = 36;
 const RULER_H = 22;
 const FLAGS_H = 16;
-const MAIN_H = 150;
-const HEIGHT = OVERVIEW_H + RULER_H + FLAGS_H + MAIN_H;
 const MAIN_TOP = OVERVIEW_H + RULER_H + FLAGS_H;
+/** The waveform gets the rest of the panel's height, but at least this much. */
+const MIN_MAIN_H = 60;
 /** Ruler steps in seconds; the first one that leaves enough room between labels wins. */
 const TICK_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
 const MIN_TICK_PX = 90;
@@ -66,13 +67,14 @@ export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(0);
+  const [height, setHeight] = useState(MAIN_TOP + 150);
   const [hover, setHover] = useState<Hover>(null);
   const drag = useRef<Drag | null>(null);
   const frame = useRef(0);
   // Kept in refs so the draw function and native listeners always see current values.
-  const props = useRef({ tiles, spikes, markers, gaps, segS, width });
+  const props = useRef({ tiles, spikes, markers, gaps, segS, width, height });
   useEffect(() => {
-    props.current = { tiles, spikes, markers, gaps, segS, width };
+    props.current = { tiles, spikes, markers, gaps, segS, width, height };
   });
 
   // --- drawing -------------------------------------------------------------------------------
@@ -81,8 +83,10 @@ export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
   useEffect(() => {
     draw.current = () => {
       const canvas = canvasRef.current;
-      const { tiles, spikes, markers, gaps, segS, width: w } = props.current;
+      const { tiles, spikes, markers, gaps, segS, width: w, height } = props.current;
       if (!canvas || w === 0) return;
+      const HEIGHT = Math.max(height, MAIN_TOP + MIN_MAIN_H);
+      const MAIN_H = HEIGHT - MAIN_TOP;
       const dpr = window.devicePixelRatio || 1;
       if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(HEIGHT * dpr)) {
         canvas.width = Math.round(w * dpr);
@@ -246,25 +250,27 @@ export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
 
   useEffect(() => {
     schedule.current();
-  }, [tiles, spikes, markers, gaps, segS, width]);
+  }, [tiles, spikes, markers, gaps, segS, width, height]);
 
   useEffect(() => {
     const redraw = schedule.current;
     const unsubscribeTiles = tiles.subscribe(redraw);
     const unsubscribeView = useView.subscribe(redraw);
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    media.addEventListener("change", redraw);
+    const unsubscribeTheme = onThemeChange(redraw);
     return () => {
       unsubscribeTiles();
       unsubscribeView();
-      media.removeEventListener("change", redraw);
+      unsubscribeTheme();
     };
   }, [tiles]);
 
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(([entry]) => setWidth(Math.floor(entry.contentRect.width)));
+    const ro = new ResizeObserver(([entry]) => {
+      setWidth(Math.floor(entry.contentRect.width));
+      setHeight(Math.floor(entry.contentRect.height));
+    });
     ro.observe(el);
     return () => {
       ro.disconnect();
@@ -424,7 +430,7 @@ export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
     <div className="timeline" ref={wrapRef}>
       <canvas
         ref={canvasRef}
-        style={{ width: `${width}px`, height: `${HEIGHT}px` }}
+        style={{ width: `${width}px`, height: `${Math.max(height, MAIN_TOP + MIN_MAIN_H)}px` }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -433,7 +439,7 @@ export function Timeline({ tiles, spikes, markers, gaps, segS }: Props) {
         onDoubleClick={onDoubleClick}
       />
       {hover && (
-        <div className="timeline-tip" style={{ left: Math.min(hover.x + 12, Math.max(0, width - 260)), top: hover.y + 14 }}>
+        <div className="timeline-tip" style={{ left: Math.min(hover.x + 12, Math.max(0, width - 260)), top: hover.y > height - 40 ? hover.y - 30 : hover.y + 14 }}>
           {hover.text}
         </div>
       )}

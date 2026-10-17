@@ -1,6 +1,6 @@
 # SteamReplay: overview
 
-> Read this first. Each milestone spec (`01`–`08`, no `07`) assumes you know this file.
+> Read this first. Each milestone spec (`01`–`09`, no `07`) assumes you know this file.
 
 ## Context and goals
 The team records gameplay with **Steam Game Recording** in background mode. Today the only way to find good moments is manual markers. Most good moments are loud: people laughing, shouting or cheering.
@@ -206,5 +206,6 @@ steamreplay/
 | 6 | [06-spike-tuning-settings.md](06-spike-tuning-settings.md) | Live spike tuning with per-game presets, settings page, shortcut overlay, recent exports |
 | 7 | *(skipped)* | Live sessions were dropped. An open session does not grow; use Refresh. Export already leaves out the chunk being written. |
 | 8 | [08-distribution.md](08-distribution.md) | Icon, per-user installer, auto-update from GitHub Releases, AppImage, README |
+| 9 | [09-ui-revamp.md](09-ui-revamp.md) | Editor workspace: library with thumbnails, big video, inspector tabs, global export queue, themes |
 
-**Build order: 01 → 02 → 04 → 03 → 05 → 06 → 08.** M4 (preview) comes before M3 (export): choosing in and out points makes much more sense when you can see the video. The file numbers were kept, so the M3/M4 labels in the specs still refer to the files.
+**Build order: 01 → 02 → 04 → 03 → 05 → 06 → 08 → 09.** M4 (preview) comes before M3 (export): choosing in and out points makes much more sense when you can see the video. The file numbers were kept, so the M3/M4 labels in the specs still refer to the files.

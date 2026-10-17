@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { commands, type PreviewInfo } from "../bindings";
-import { errorMessage, unwrap } from "../lib/ipc";
-import { formatTimecode } from "../lib/format";
-import { dialogOpen, isTyping } from "../lib/keys";
-import { MsePlayer, type PlayerStatus } from "../lib/msePlayer";
-import { followPlayhead, useView } from "../state/view";
+import { RotateCcw, VideoOff } from "lucide-react";
+import { commands, type PreviewInfo } from "../../bindings";
+import { errorMessage, unwrap } from "../../lib/ipc";
+import { MsePlayer, type PlayerStatus } from "../../lib/msePlayer";
+import { useShortcut } from "../../lib/shortcuts";
+import { followPlayhead, useView } from "../../state/view";
+import { Button } from "../ui/Button";
+import { Spinner } from "../ui/misc";
+import { Transport } from "./Transport";
 
-type Props = { id: string };
+type Props = {
+  id: string;
+  /** The preview opened (for the Info tab). */
+  onInfo: (info: PreviewInfo | null) => void;
+};
 
 /** Playhead updates from the video, at most this often. */
 const SYNC_INTERVAL_MS = 1000 / 30;
@@ -14,20 +21,24 @@ const RATES = [1, 2, 4];
 
 type Load = { kind: "opening" } | { kind: "ready"; info: PreviewInfo } | { kind: "failed"; message: string };
 
-/** Low-res preview video above the timeline, synced with the playhead. */
-export function Player({ id }: Props) {
+/** The preview video, synced with the playhead, with the transport bar below it. */
+export function Player({ id, onInfo }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerRef = useRef<MsePlayer | null>(null);
   const [load, setLoad] = useState<Load>({ kind: "opening" });
+  const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState<PlayerStatus>({ kind: "idle" });
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(1);
   /** J: simulated reverse playback (MSE has no negative rates). 0 = off. */
   const [reverse, setReverse] = useState(0);
+  const onInfoRef = useRef(onInfo);
+  useEffect(() => {
+    onInfoRef.current = onInfo;
+  });
 
   // Open the preview and create the player.
   useEffect(() => {
-    // `WaveformPanel` is keyed by session, so `load` starts as "opening" for every id.
     let active = true;
     unwrap(commands.getPreviewInfo(id))
       .then((info) => {
@@ -36,6 +47,7 @@ export function Player({ id }: Props) {
         playerRef.current = player;
         player.seek(useView.getState().playheadS);
         setLoad({ kind: "ready", info });
+        onInfoRef.current(info);
       })
       .catch((e: unknown) => active && setLoad({ kind: "failed", message: errorMessage(e) }));
     return () => {
@@ -43,11 +55,12 @@ export function Player({ id }: Props) {
       playerRef.current?.destroy();
       playerRef.current = null;
       useView.getState().setPlaying(false);
+      onInfoRef.current(null);
       void commands.previewClose(id);
     };
-  }, [id]);
+  }, [id, attempt]);
 
-  // Seeks from the timeline, spike list and keys.
+  // Seeks from the timeline, the moments list and keys.
   useEffect(
     () =>
       useView.subscribe((s, prev) => {
@@ -126,72 +139,8 @@ export function Player({ id }: Props) {
     return () => window.clearInterval(timer);
   }, [reverse]);
 
-  // Keys: Space, J/K/L, ←/→ (Shift: 5 s), `,`/`.` (one frame). Listed in `SHORTCUTS` (lib/keys.ts).
-  useEffect(() => {
-    if (load.kind !== "ready") return;
-    const fps = load.info.fps;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.altKey || e.metaKey || isTyping(e.target) || dialogOpen()) return;
-      const video = videoRef.current;
-      if (!video) return;
-      const jump = (dt: number) => useView.getState().seek(video.currentTime + dt);
-      switch (e.key) {
-        case " ":
-          setReverse(0);
-          if (video.paused) void video.play().catch(() => {});
-          else video.pause();
-          break;
-        case "k":
-        case "K":
-          setReverse(0);
-          video.pause();
-          break;
-        case "l":
-        case "L": {
-          setReverse(0);
-          if (video.paused) {
-            video.playbackRate = 1;
-            void video.play().catch(() => {});
-          } else {
-            video.playbackRate = RATES[(RATES.indexOf(video.playbackRate) + 1) % RATES.length] ?? 1;
-          }
-          break;
-        }
-        case "j":
-        case "J":
-          video.pause();
-          setReverse((r) => (r === 0 ? 2 : Math.min(r * 2, 8)));
-          break;
-        case "ArrowLeft":
-          jump(e.shiftKey ? -5 : -1);
-          break;
-        case "ArrowRight":
-          jump(e.shiftKey ? 5 : 1);
-          break;
-        case ",":
-          video.pause();
-          jump(-1 / fps);
-          break;
-        case ".":
-          video.pause();
-          jump(1 / fps);
-          break;
-        default:
-          return;
-      }
-      e.preventDefault();
-    };
-    // A focused button would also "click" on Space.
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === " " && !isTyping(e.target)) e.preventDefault();
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("keyup", onKeyUp);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("keyup", onKeyUp);
-    };
-  }, [load]);
+  const ready = load.kind === "ready";
+  const fps = ready ? load.info.fps : 60;
 
   const togglePlay = () => {
     const video = videoRef.current;
@@ -200,13 +149,48 @@ export function Player({ id }: Props) {
     if (video.paused) void video.play().catch(() => {});
     else video.pause();
   };
+  const pause = () => {
+    setReverse(0);
+    videoRef.current?.pause();
+  };
+  const playForward = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    setReverse(0);
+    if (video.paused) {
+      video.playbackRate = 1;
+      void video.play().catch(() => {});
+    } else {
+      video.playbackRate = RATES[(RATES.indexOf(video.playbackRate) + 1) % RATES.length] ?? 1;
+    }
+  };
+  const playBackward = () => {
+    videoRef.current?.pause();
+    setReverse((r) => (r === 0 ? 2 : Math.min(r * 2, 8)));
+  };
+  const jump = (dt: number) => {
+    const video = videoRef.current;
+    if (video) useView.getState().seek(video.currentTime + dt);
+  };
+  const frame = (dir: 1 | -1) => {
+    videoRef.current?.pause();
+    jump(dir / fps);
+  };
 
-  const playhead = useView((s) => s.playheadS);
-  const shownRate = reverse > 0 ? `−${reverse}×` : `${rate}×`;
+  useShortcut("playPause", togglePlay, ready);
+  useShortcut("pause", pause, ready);
+  useShortcut("playForward", playForward, ready);
+  useShortcut("playBackward", playBackward, ready);
+  useShortcut("back1", () => jump(-1), ready);
+  useShortcut("forward1", () => jump(1), ready);
+  useShortcut("back5", () => jump(-5), ready);
+  useShortcut("forward5", () => jump(5), ready);
+  useShortcut("prevFrame", () => frame(-1), ready);
+  useShortcut("nextFrame", () => frame(1), ready);
 
   return (
     <div className="player">
-      <div className="player-video">
+      <div className="video-frame">
         <video
           ref={videoRef}
           playsInline
@@ -221,23 +205,44 @@ export function Player({ id }: Props) {
           onRateChange={(e) => setRate(e.currentTarget.playbackRate)}
           onClick={togglePlay}
         />
-        {load.kind === "opening" && <div className="player-overlay">Preparing preview…</div>}
-        {load.kind === "failed" && <div className="player-overlay warn">Preview unavailable: {load.message}</div>}
-        {load.kind === "ready" && status.kind === "loading" && <div className="player-overlay">Loading…</div>}
-        {status.kind === "error" && <div className="player-overlay warn">{status.message}</div>}
+        {load.kind === "opening" && (
+          <div className="video-overlay">
+            <Spinner size={22} />
+            <span>Preparing preview…</span>
+          </div>
+        )}
+        {ready && status.kind === "loading" && (
+          <div className="video-overlay subtle">
+            <Spinner size={22} />
+          </div>
+        )}
+        {(load.kind === "failed" || status.kind === "error") && (
+          <div className="video-overlay error">
+            <VideoOff size={26} aria-hidden />
+            <span>{load.kind === "failed" ? `Preview unavailable: ${load.message}` : status.kind === "error" && status.message}</span>
+            <Button
+              size="sm"
+              icon={<RotateCcw size={14} />}
+              onClick={() => {
+                setLoad({ kind: "opening" });
+                setStatus({ kind: "idle" });
+                setAttempt((a) => a + 1);
+              }}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
       </div>
-      <div className="player-controls">
-        <button type="button" onClick={togglePlay} disabled={load.kind !== "ready"} title="Play / pause (Space)">
-          {playing ? "Pause" : "Play"}
-        </button>
-        <span className="mono">{formatTimecode(playhead, 2)}</span>
-        <span className="muted">{shownRate}</span>
-        <span className="spacer" />
-        <span className="muted hint">
-          Space play · J/K/L −/stop/+ · ←/→ 1 s (Shift 5 s) · ,/. frame · I/O in/out · Ctrl+L loop
-          {load.kind === "ready" && ` · ${load.info.backend}`}
-        </span>
-      </div>
+      <Transport
+        ready={ready}
+        playing={playing}
+        rateLabel={reverse > 0 ? `−${reverse}×` : `${rate}×`}
+        onTogglePlay={togglePlay}
+        onJump={jump}
+        onFrame={frame}
+        onRate={playForward}
+      />
     </div>
   );
 }

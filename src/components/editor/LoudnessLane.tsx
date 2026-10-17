@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { commands, type Spike } from "../bindings";
-import { unwrap } from "../lib/ipc";
-import type { WaveformTiles } from "../lib/waveform";
-import { useView } from "../state/view";
+import { commands, type Spike } from "../../bindings";
+import { unwrap } from "../../lib/ipc";
+import type { WaveformTiles } from "../../lib/waveform";
+import { onThemeChange } from "../../state/ui";
+import { useView } from "../../state/view";
 
 type Props = {
   tiles: WaveformTiles;
@@ -106,12 +107,15 @@ export function LoudnessLane({ tiles, thresholdDb, spikes }: Props) {
     };
     draw();
     let frame = 0;
-    const unsubscribe = useView.subscribe(() => {
+    const redraw = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(draw);
-    });
+    };
+    const unsubscribe = useView.subscribe(redraw);
+    const unsubscribeTheme = onThemeChange(redraw);
     return () => {
       unsubscribe();
+      unsubscribeTheme();
       cancelAnimationFrame(frame);
     };
   }, [tiles, data, width, thresholdDb]);

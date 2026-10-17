@@ -1,7 +1,7 @@
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { commands } from "../bindings";
-import { useExportBusy } from "../state/exportBusy";
+import { selectBusy, useExports } from "../state/exports";
 
 export type { Update };
 
@@ -16,10 +16,10 @@ export async function checkForUpdate(): Promise<Update | null> {
 
 /** Resolves once no export is queued or running. */
 export function waitForExports(): Promise<void> {
-  if (!useExportBusy.getState().busy) return Promise.resolve();
+  if (!selectBusy(useExports.getState())) return Promise.resolve();
   return new Promise((resolve) => {
-    const unsubscribe = useExportBusy.subscribe((s) => {
-      if (s.busy) return;
+    const unsubscribe = useExports.subscribe((s) => {
+      if (selectBusy(s)) return;
       unsubscribe();
       resolve();
     });

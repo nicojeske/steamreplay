@@ -8,6 +8,7 @@ pub mod preview;
 pub mod ffmpeg;
 pub mod pyramid;
 pub mod spikes;
+pub mod thumbs;
 
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
