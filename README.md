@@ -75,7 +75,7 @@ pnpm tsc --noEmit
 
 Without the model, the app falls back to loud moments and the model tests are skipped. `cargo test` regenerates `src/bindings.ts`. Commit it when it changes.
 
-Every push to `main` builds the Windows installer and the Linux bundles as workflow artifacts (`.github/workflows/build.yml`).
+Every push to `main` runs the checks on Linux and Windows and builds the Windows installer as a workflow artifact (`.github/workflows/build.yml`). That build also warms the Rust cache that the Windows release job restores.
 
 ## Releasing
 

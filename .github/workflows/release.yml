@@ -44,9 +44,13 @@ jobs:
           node-version: lts/*
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+      # Restores the cache that build.yml saves on main (tags cannot read each other's caches,
+      # so saving here would only cost time).
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: ${{ runner.os }}
+          save-if: false
 
       - run: pnpm install --frozen-lockfile
       - name: Cache ffmpeg sidecar
