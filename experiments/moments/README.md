@@ -32,7 +32,7 @@ Each method writes `out/<stem>/<method>.{json,npz}`: the ranked regions and a sc
 ```sh
 uv run python pool.py   # → <app data>/de.steamreplay.app/labels/<stem>.pool.json
 ```
-In the app: **Settings → Loud moments → Labelling mode → On**. Open a recording. The Moments tab now lists the pool in time order:
+In the app: **Settings → Moments → Labelling mode → On**. Open a recording. The Moments tab now lists the pool in time order:
 - Select a candidate (or press N).
 - Listen, then press **1** good, **2** meh or **3** bad. The next unrated candidate starts playing.
 - **X** marks a good moment that no candidate covers (missed), around the playhead.

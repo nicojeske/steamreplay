@@ -87,11 +87,14 @@ def smooth(curve: np.ndarray, hz: float, window_s: float) -> np.ndarray:
     return np.convolve(curve, k, mode="same")
 
 
-def regions(curve: np.ndarray, hz: float, duration_s: float, quantile: float = 0.97, top: int = 200) -> list[Region]:
-    """Runs above the `quantile` of the curve, merged within 5 s, padded by 1.5 s, scored by their peak."""
+def regions(
+    curve: np.ndarray, hz: float, duration_s: float, quantile: float = 0.97, top: int = 200, threshold: float | None = None
+) -> list[Region]:
+    """Runs above the `quantile` of the curve (or an absolute `threshold`, as the app since M15),
+    merged within 5 s, padded by 1.5 s, scored by their peak."""
     if len(curve) == 0:
         return []
-    thr = float(np.quantile(curve, quantile))
+    thr = float(np.quantile(curve, quantile)) if threshold is None else threshold
     above = curve > thr
     if not above.any():
         return []
