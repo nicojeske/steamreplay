@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
 import { Collapsible, RadioGroup } from "radix-ui";
 import { ChevronDown, CloudUpload, FolderOpen, Scissors, Zap, Gauge } from "lucide-react";
 import {
@@ -18,7 +18,7 @@ import { unwrap } from "../../lib/ipc";
 import { formatBytes, formatTimecode } from "../../lib/format";
 import { CODEC_LABELS, MIN_VIDEO_KBPS, PRESETS, PRESET_ORDER, isWiderThan16x9, presetLabel, videoKbps } from "../../lib/exportPresets";
 import { shortcutKeys, useShortcut } from "../../lib/shortcuts";
-import { useExports, type Job } from "../../state/exports";
+import { fileName, useExports, type Job } from "../../state/exports";
 import { defaultTitle, useFireshare } from "../../state/fireshare";
 import { toast } from "../../state/toasts";
 import { useUi } from "../../state/ui";
@@ -33,6 +33,8 @@ const HEIGHTS = [1440, 1080, 720];
 const FRAME_RATES = [60, 30];
 const CRF_MIN = 16;
 const CRF_MAX = 36;
+/** `export::MAX_NAME_CHARS`. */
+const MAX_NAME_CHARS = 120;
 
 const MODE_TEXT: Record<ExportModeKind, string> = {
   fast: "Original quality, instant. Cuts on the 3 s chunk boundaries and keeps HEVC, which Discord and some players cannot play.",
@@ -59,9 +61,12 @@ export function ExportTab({ detail }: { detail: SessionDetail }) {
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [codecs, setCodecs] = useState<VideoCodec[] | null>(null);
   const [snap, setSnap] = useState<Snap | null>(null);
-  const [path, setPath] = useState("");
-  /** The user typed or browsed a path; stop replacing it with the default. */
-  const [edited, setEdited] = useState(false);
+  /** The clip name; empty gives the default name, shown as the placeholder. */
+  const [name, setName] = useState("");
+  const [placeholder, setPlaceholder] = useState("");
+  const [dir, setDir] = useState("");
+  /** The user typed or browsed a folder; stop replacing it with the default. */
+  const [dirEdited, setDirEdited] = useState(false);
   const jobs = useExports((s) => s.jobs);
   const enqueue = useExports((s) => s.enqueue);
   const openUpload = useFireshare((s) => s.openUpload);
@@ -108,6 +113,17 @@ export function ExportTab({ detail }: { detail: SessionDetail }) {
     };
   }, [id, wantCodecs]);
 
+  useEffect(() => {
+    if (dirEdited) return;
+    let active = true;
+    unwrap(commands.defaultExportDir(id))
+      .then((d) => active && setDir(d))
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [id, dirEdited, settingsSeq]);
+
   // Snapped cut, size estimate and default file name follow the selection.
   useEffect(() => {
     if (inS === null || outS === null) return;
@@ -116,17 +132,15 @@ export function ExportTab({ detail }: { detail: SessionDetail }) {
       unwrap(commands.exportSnap(id, inS, outS))
         .then((s) => active && setSnap(s))
         .catch(() => active && setSnap(null));
-      if (!edited) {
-        unwrap(commands.defaultExportPath(id, inS, mode === "precise"))
-          .then((p) => active && setPath(p))
-          .catch(() => {});
-      }
+      unwrap(commands.defaultExportPath(id, inS, mode === "precise"))
+        .then((p) => active && setPlaceholder(fileName(p).replace(/\.mp4$/i, "")))
+        .catch(() => {});
     }, SNAP_DEBOUNCE_MS);
     return () => {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [id, inS, outS, edited, mode]);
+  }, [id, inS, outS, mode]);
 
   const hasSelection = inS !== null && outS !== null;
   const durS = hasSelection ? outS - inS : 0;
@@ -148,10 +162,10 @@ export function ExportTab({ detail }: { detail: SessionDetail }) {
 
   const browse = async () => {
     try {
-      const chosen = await save({ defaultPath: path || undefined, filters: [{ name: "MP4 video", extensions: ["mp4"] }] });
-      if (chosen) {
-        setPath(chosen);
-        setEdited(true);
+      const chosen = await open({ directory: true, defaultPath: dir || undefined, title: "Choose the folder for this clip" });
+      if (typeof chosen === "string") {
+        setDir(chosen);
+        setDirEdited(true);
       }
     } catch (e) {
       toast.error(e);
@@ -161,20 +175,28 @@ export function ExportTab({ detail }: { detail: SessionDetail }) {
   /** The job for the current selection and settings, or `null` if it cannot export. */
   const jobFor = (upload: UploadMeta | null): Omit<Job, "jobId" | "status"> | null => {
     if (inS === null || outS === null || !canExport) return null;
-    const output = edited && path.trim() ? path.trim() : null;
+    const clipName = name.trim() || null;
+    const folder = dirEdited && dir.trim() ? dir.trim() : null;
     const jobMode: ExportMode = precise ? { kind: "precise", ...opts } : { kind: "fast" };
     const label = precise ? `Precise · ${presetLabel(preset)}` : "Fast";
     const game = detail.summary.gameName;
-    const title = defaultTitle(game, new Date(new Date(detail.summary.startedAt).getTime() + inS * 1000));
-    return { gameName: game, export: { sessionId: id, inS, outS, output, mode: jobMode }, path: null, upload, defaultTitle: title, label };
+    const title = clipName ?? defaultTitle(game, new Date(new Date(detail.summary.startedAt).getTime() + inS * 1000));
+    return {
+      gameName: game,
+      export: { sessionId: id, inS, outS, name: clipName, dir: folder, mode: jobMode },
+      path: null,
+      upload,
+      defaultTitle: title,
+      label,
+    };
   };
 
   const startExport = () => {
     const job = jobFor(null);
     if (!job) return;
     enqueue(job);
-    // The next export gets a fresh default name again.
-    setEdited(false);
+    // The next clip gets its own name.
+    setName("");
   };
 
   const exportAndUpload = () => {
@@ -186,7 +208,7 @@ export function ExportTab({ detail }: { detail: SessionDetail }) {
       submitLabel: "Export & upload",
       onSubmit: (upload) => {
         enqueue({ ...job, upload });
-        setEdited(false);
+        setName("");
       },
     });
   };
@@ -272,20 +294,37 @@ export function ExportTab({ detail }: { detail: SessionDetail }) {
       )}
 
       <section className="export-section">
-        <div className="section-label">Output</div>
+        <div className="section-label">Name</div>
+        <input
+          className="input"
+          value={name}
+          maxLength={MAX_NAME_CHARS}
+          placeholder={placeholder || "Clip name"}
+          aria-label="Clip name"
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && canExport) startExport();
+          }}
+        />
+        <p className="hint muted">The file name and the Fireshare title.</p>
+      </section>
+
+      <section className="export-section">
+        <div className="section-label">Folder</div>
         <div className="path-row">
           <input
             className="input mono"
-            value={path}
-            placeholder={hasSelection ? "Output file" : "Chosen when you export"}
+            value={dir}
+            placeholder="Export folder"
             spellCheck={false}
+            aria-label="Export folder"
             onChange={(e) => {
-              setPath(e.target.value);
-              setEdited(true);
+              setDir(e.target.value);
+              setDirEdited(true);
             }}
-            title={path}
+            title={dir}
           />
-          <IconButton label="Choose file…" variant="secondary" icon={<FolderOpen size={16} />} onClick={() => void browse()} />
+          <IconButton label="Choose folder…" variant="secondary" icon={<FolderOpen size={16} />} onClick={() => void browse()} />
         </div>
       </section>
 

@@ -109,7 +109,7 @@ function RecentExports() {
                   path={e.path}
                   url={e.fireshareUrl ?? null}
                   gameName={e.gameName}
-                  defaultTitle={defaultTitle(e.gameName, new Date(e.finishedAt))}
+                  defaultTitle={e.name ?? defaultTitle(e.gameName, new Date(e.finishedAt))}
                 />
                 <PathActions path={e.path} />
               </>

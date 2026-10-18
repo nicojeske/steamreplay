@@ -863,6 +863,13 @@ pub async fn default_export_path(app: AppHandle, id: String, in_s: f64, exact: b
     .await
 }
 
+/// The folder an export goes to when the user does not choose one.
+#[tauri::command]
+#[specta::specta]
+pub async fn default_export_dir(app: AppHandle, id: String) -> AppResult<PathBuf> {
+    blocking(move || export_dir(&app, &session(&app, &id)?.summary.account_id)).await
+}
+
 /// Exports the selection (stream copy or re-encode). `job_id` is chosen by the frontend for
 /// `cancel_job`.
 #[tauri::command]
@@ -877,21 +884,26 @@ pub async fn export_clip(
 ) -> AppResult<ExportResult> {
     let job = state.start_job(&job_id);
     let exact = matches!(req.mode, ExportMode::Precise(_));
+    let name = req.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).map(str::to_owned);
     let (detail, snap, out) = {
-        let (app, req) = (app.clone(), req.clone());
+        let (app, req, name) = (app.clone(), req.clone(), name.clone());
         blocking(move || {
+            let name = name.as_deref();
             let detail = session(&app, &req.id)?;
             let s = snap(&detail, req.in_s, req.out_s)?;
-            let out = match req.output {
-                Some(p) => p,
+            let dir = match req.dir {
+                Some(d) => d,
+                None => export_dir(&app, &detail.summary.account_id)?,
+            };
+            std::fs::create_dir_all(&dir).map_err(|e| AppError::Io(format!("{}: {e}", dir.display())))?;
+            let file = match name {
+                Some(n) => export::clip_file_name(n),
                 None => {
-                    let dir = export_dir(&app, &detail.summary.account_id)?;
                     let t = name_time(&detail, req.in_s.min(req.out_s), exact)?;
-                    let name = export::default_file_name(&detail.summary.game_name, &detail.summary.started_at, t);
-                    export::dedupe(&dir.join(name))
+                    export::default_file_name(&detail.summary.game_name, &detail.summary.started_at, t)
                 }
             };
-            Ok((detail, s, out))
+            Ok((detail, s, export::dedupe(&dir.join(file))))
         })
         .await?
     };
@@ -913,7 +925,7 @@ pub async fn export_clip(
     };
     let job_dir = export_cache_dir(&app)?.join(&job_id);
     let seg = detail.mpd.as_ref().map_or(3.0, |m| m.segment_duration_s);
-    let title = format!("{} {}", detail.summary.game_name, detail.summary.started_at);
+    let title = name.clone().unwrap_or_else(|| format!("{} {}", detail.summary.game_name, detail.summary.started_at));
     let on_progress: ffmpeg::ProgressFn = Arc::new(move |fraction| {
         let _ = progress.send(Progress { fraction });
     });
@@ -937,6 +949,7 @@ pub async fn export_clip(
         size_bytes: done.size_bytes,
         finished_at: chrono::Local::now().to_rfc3339(),
         fireshare_url: None,
+        name,
     };
     let list = read_setting::<Vec<RecentExport>>(&app, RECENT_EXPORTS_KEY).unwrap_or_default();
     if let Err(e) = write_setting(&app, RECENT_EXPORTS_KEY, Some(export::push_recent(list, recent))) {

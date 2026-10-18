@@ -12,8 +12,10 @@ export type ExportSpec = {
   sessionId: string;
   inS: number;
   outS: number;
-  /** `null`: the default name, chosen when the job starts (so queued jobs do not collide). */
-  output: string | null;
+  /** The clip name (file name and title). `null`: the default name. Made unique when the job starts. */
+  name: string | null;
+  /** `null`: the default export folder. */
+  dir: string | null;
   mode: ExportMode;
 };
 
@@ -100,8 +102,8 @@ export const useExports = create<ExportsState>((set, get) => {
   const runExport = (job: Job, spec: ExportSpec) => {
     const progress = new Channel<Progress>();
     progress.onmessage = (p) => update(job.jobId, { kind: "running", phase: "export", fraction: p.fraction });
-    const { sessionId: id, inS, outS, output, mode } = spec;
-    return unwrap(commands.exportClip({ id, inS, outS, output, mode }, job.jobId, progress));
+    const { sessionId: id, inS, outS, name, dir, mode } = spec;
+    return unwrap(commands.exportClip({ id, inS, outS, name, dir, mode }, job.jobId, progress));
   };
 
   const runUpload = (job: Job, path: string, meta: UploadMeta) => {

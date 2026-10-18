@@ -106,6 +106,8 @@ export const commands = {
 	exportSnap: (id: string, inS: number | null, outS: number | null) => typedError<Snap, AppError>(__TAURI_INVOKE("export_snap", { id, inS, outS })),
 	/**  `<export folder>/<Game>_<date>.mp4` for the in point, made unique. */
 	defaultExportPath: (id: string, inS: number | null, exact: boolean) => typedError<string, AppError>(__TAURI_INVOKE("default_export_path", { id, inS, exact })),
+	/**  The folder an export goes to when the user does not choose one. */
+	defaultExportDir: (id: string) => typedError<string, AppError>(__TAURI_INVOKE("default_export_dir", { id })),
 	/**
 	 *  Exports the selection (stream copy or re-encode). `job_id` is chosen by the frontend for
 	 *  `cancel_job`.
@@ -300,8 +302,13 @@ export type ExportRequest = {
 	id: string,
 	inS: number,
 	outS: number,
-	/**  Default: [`default_file_name`] in the account's export folder. */
-	output: string | null,
+	/**
+	 *  The clip name (M16): the file name ([`clip_file_name`]) and the mp4 title. Blank or
+	 *  `None`: [`default_file_name`].
+	 */
+	name: string | null,
+	/**  Default: the account's export folder. */
+	dir: string | null,
 	mode: ExportMode,
 };
 
@@ -484,6 +491,8 @@ export type RecentExport = {
 	finishedAt: string,
 	/**  The share link once the file was uploaded to Fireshare (M10). */
 	fireshareUrl?: string | null,
+	/**  The name the user gave the clip (M16), the suggested Fireshare title. */
+	name?: string | null,
 };
 
 /**  A Steam root candidate and what was found there (for the empty state and diagnostics). */

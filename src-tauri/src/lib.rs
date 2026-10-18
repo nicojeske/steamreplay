@@ -34,6 +34,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         commands::clear_preview_cache,
         commands::export_snap,
         commands::default_export_path,
+        commands::default_export_dir,
         commands::export_clip,
         commands::get_export_capabilities,
         commands::get_export_prefs,

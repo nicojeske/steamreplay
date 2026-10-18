@@ -31,8 +31,11 @@ pub struct ExportRequest {
     pub in_s: f64,
     #[specta(type = specta_typescript::Number)]
     pub out_s: f64,
-    /// Default: [`default_file_name`] in the account's export folder.
-    pub output: Option<PathBuf>,
+    /// The clip name (M16): the file name ([`clip_file_name`]) and the mp4 title. Blank or
+    /// `None`: [`default_file_name`].
+    pub name: Option<String>,
+    /// Default: the account's export folder.
+    pub dir: Option<PathBuf>,
     pub mode: ExportMode,
 }
 
@@ -126,6 +129,9 @@ pub struct RecentExport {
     /// The share link once the file was uploaded to Fireshare (M10).
     #[serde(default)]
     pub fireshare_url: Option<String>,
+    /// The name the user gave the clip (M16), the suggested Fireshare title.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -336,6 +342,31 @@ pub fn default_file_name(game: &str, started_at: &str, in_s: f64) -> String {
         .map(|t| (t + TimeDelta::milliseconds((in_s * 1000.0).round() as i64)).format("%Y-%m-%d_%H-%M-%S").to_string())
         .unwrap_or_else(|_| format!("{in_s:.0}s"));
     format!("{}_{stamp}.mp4", sanitize_name(game).replace(' ', "_"))
+}
+
+/// Longest clip name in characters, well below Windows' MAX_PATH with the folder in front.
+pub const MAX_NAME_CHARS: usize = 120;
+
+/// `<name>.mp4` for a clip name: a typed `.mp4` dropped, characters Windows forbids removed,
+/// at most [`MAX_NAME_CHARS`], device names (`CON`, `COM1`, …) escaped. Spaces stay.
+pub fn clip_file_name(name: &str) -> String {
+    let name = name.trim();
+    let name = match name.len().checked_sub(4) {
+        Some(i) if name.is_char_boundary(i) && name[i..].eq_ignore_ascii_case(".mp4") => &name[..i],
+        _ => name,
+    };
+    let cut: String = sanitize_name(name).chars().take(MAX_NAME_CHARS).collect();
+    let mut s = sanitize_name(&cut);
+    let upper = s.to_ascii_uppercase();
+    let device = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (upper.len() == 4
+            && (upper.starts_with("COM") || upper.starts_with("LPT"))
+            && upper.as_bytes()[3].is_ascii_digit()
+            && upper.as_bytes()[3] != b'0');
+    if device {
+        s.push('_');
+    }
+    format!("{s}.mp4")
 }
 
 /// `path`, or `name_2.ext`, `name_3.ext`, … if it exists.
@@ -586,6 +617,23 @@ mod tests {
     }
 
     #[test]
+    fn clip_file_names() {
+        assert_eq!(clip_file_name("Ace on Inferno"), "Ace on Inferno.mp4");
+        assert_eq!(clip_file_name("  Ace: 1/2?  "), "Ace 12.mp4");
+        assert_eq!(clip_file_name("clip.MP4"), "clip.mp4");
+        assert_eq!(clip_file_name("<>|"), "Clip.mp4");
+        assert_eq!(clip_file_name("con"), "con_.mp4");
+        assert_eq!(clip_file_name("COM1"), "COM1_.mp4");
+        assert_eq!(clip_file_name("COM0"), "COM0.mp4");
+        assert_eq!(clip_file_name("Grüße 😀"), "Grüße 😀.mp4");
+        assert_eq!(clip_file_name("ab.mp4x"), "ab.mp4x.mp4");
+        let long = "é".repeat(200);
+        assert_eq!(clip_file_name(&long), format!("{}.mp4", "é".repeat(MAX_NAME_CHARS)));
+        // A cut that ends on a space or dot is trimmed again.
+        assert_eq!(clip_file_name(&format!("{} b", "a".repeat(MAX_NAME_CHARS - 1))), format!("{}.mp4", "a".repeat(MAX_NAME_CHARS - 1)));
+    }
+
+    #[test]
     fn dedupes() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("a.mp4");
@@ -737,6 +785,7 @@ mod tests {
             size_bytes: 1,
             finished_at: String::new(),
             fireshare_url: None,
+            name: None,
         };
         let mut list = Vec::new();
         for i in 0..25 {
